@@ -35,8 +35,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* legend = new QLabel(
         QStringLiteral("  ") +
-        QStringLiteral("<font color='#4A90C4'>■ Class</font>  ") +
         QStringLiteral("<font color='#50AA64'>■ Module</font>  ") +
+        QStringLiteral("<font color='#4A90C4'>■ Class</font>  ") +
         QStringLiteral("<font color='#D48448'>● Function</font>  ") +
         QStringLiteral("  |  Scroll: zoom  |  Middle-mouse / Space+drag: pan  "
                        "|  Double-click: rename  |  Del: remove selected"));
@@ -110,12 +110,12 @@ void MainWindow::buildToolbar()
     selAct->setChecked(true);
 
     tb->addSeparator();
-    addMode(QStringLiteral("Add Class"),
-            makeNodeIcon(QColor(74,144,196), QStringLiteral("rect")),
-            QStringLiteral("C"), EditMode::AddClass);
     addMode(QStringLiteral("Add Module"),
             makeNodeIcon(QColor(80,170,100), QStringLiteral("round")),
             QStringLiteral("M"), EditMode::AddModule);
+    addMode(QStringLiteral("Add Class"),
+            makeNodeIcon(QColor(74,144,196), QStringLiteral("rect")),
+            QStringLiteral("C"), EditMode::AddClass);
     addMode(QStringLiteral("Add Function"),
             makeNodeIcon(QColor(212,132,74), QStringLiteral("ellipse")),
             QStringLiteral("F"), EditMode::AddFunction);
@@ -169,8 +169,8 @@ void MainWindow::buildMenus()
             QStringLiteral(
                 "<b>Graph Draw</b> — Dependency Visualiser<br><br>"
                 "<b>Node types:</b><br>"
-                "&nbsp;<font color='#4A90C4'>■</font> <b>Class</b> — rectangle<br>"
                 "&nbsp;<font color='#50AA64'>■</font> <b>Module</b> — rounded rectangle<br>"
+                "&nbsp;<font color='#4A90C4'>■</font> <b>Class</b> — rectangle<br>"
                 "&nbsp;<font color='#D48448'>●</font> <b>Function</b> — ellipse<br><br>"
                 "<b>Shortcuts:</b><br>"
                 "&nbsp;S — Select &nbsp; C — Add Class &nbsp; M — Add Module<br>"
@@ -226,8 +226,8 @@ void MainWindow::onModeChanged(EditMode mode)
 {
     static const QMap<EditMode, QString> names = {
         {EditMode::Select,      QStringLiteral("Select")},
-        {EditMode::AddClass,    QStringLiteral("Add Class")},
         {EditMode::AddModule,   QStringLiteral("Add Module")},
+        {EditMode::AddClass,    QStringLiteral("Add Class")},
         {EditMode::AddFunction, QStringLiteral("Add Function")},
         {EditMode::AddEdge,     QStringLiteral("Add Edge")},
         {EditMode::Delete,      QStringLiteral("Delete")},

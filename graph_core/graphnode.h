@@ -5,7 +5,7 @@
 #include <QPointer>
 #include <QString>
 
-enum class NodeType { Class, Module, Function };
+enum class NodeType { Module, Class, Function };
 
 class GraphNode : public QGraphicsObject {
     Q_OBJECT
