@@ -1,0 +1,126 @@
+{
+	"BUILD_DIR" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/graph_core_autogen",
+	"CMAKE_BINARY_DIR" : "/Users/josephsenanobrien/repos/graph_draw",
+	"CMAKE_CURRENT_BINARY_DIR" : "/Users/josephsenanobrien/repos/graph_draw/graph_core",
+	"CMAKE_CURRENT_SOURCE_DIR" : "/Users/josephsenanobrien/repos/graph_draw/graph_core",
+	"CMAKE_EXECUTABLE" : "/opt/homebrew/bin/cmake",
+	"CMAKE_LIST_FILES" : [ "/Users/josephsenanobrien/repos/graph_draw/graph_core/CMakeLists.txt" ],
+	"CMAKE_SOURCE_DIR" : "/Users/josephsenanobrien/repos/graph_draw",
+	"CROSS_CONFIG" : false,
+	"DEP_FILE" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/graph_core_autogen/deps",
+	"DEP_FILE_RULE_NAME" : "graph_core_autogen/timestamp",
+	"HEADERS" : 
+	[
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphedge.h",
+			"MU",
+			"EWIEGA46WW/moc_graphedge.cpp",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphnode.h",
+			"MU",
+			"EWIEGA46WW/moc_graphnode.cpp",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphscene.h",
+			"MU",
+			"EWIEGA46WW/moc_graphscene.cpp",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphview.h",
+			"MU",
+			"EWIEGA46WW/moc_graphview.cpp",
+			null
+		]
+	],
+	"HEADER_EXTENSIONS" : [ "h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx" ],
+	"INCLUDE_DIR" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/graph_core_autogen/include",
+	"MOC_COMPILATION_FILE" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/graph_core_autogen/mocs_compilation.cpp",
+	"MOC_DEFINITIONS" : [ "QT_CORE_LIB", "QT_GUI_LIB", "QT_NO_DEBUG", "QT_WIDGETS_LIB" ],
+	"MOC_DEPEND_FILTERS" : 
+	[
+		[
+			"Q_PLUGIN_METADATA",
+			"[\n][ \t]*Q_PLUGIN_METADATA[ \t]*\\([^\\)]*FILE[ \t]*\"([^\"]+)\""
+		]
+	],
+	"MOC_INCLUDES" : 
+	[
+		"/Users/josephsenanobrien/repos/graph_draw/graph_core",
+		"/opt/homebrew/lib/QtWidgets.framework/Headers",
+		"/opt/homebrew/lib/QtWidgets.framework",
+		"/opt/homebrew/lib/QtCore.framework/Headers",
+		"/opt/homebrew/lib/QtCore.framework",
+		"/opt/homebrew/share/qt/mkspecs/macx-clang",
+		"/opt/homebrew/include",
+		"/opt/homebrew/lib/QtGui.framework/Headers",
+		"/opt/homebrew/lib/QtGui.framework",
+		"/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/c++/v1",
+		"/Library/Developer/CommandLineTools/usr/lib/clang/17/include",
+		"/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include",
+		"/Library/Developer/CommandLineTools/usr/include"
+	],
+	"MOC_MACRO_NAMES" : 
+	[
+		"Q_OBJECT",
+		"Q_GADGET",
+		"Q_NAMESPACE",
+		"Q_NAMESPACE_EXPORT",
+		"Q_GADGET_EXPORT",
+		"Q_ENUM_NS"
+	],
+	"MOC_OPTIONS" : [],
+	"MOC_PATH_PREFIX" : false,
+	"MOC_PREDEFS_CMD" : 
+	[
+		"/usr/bin/c++",
+		"-std=gnu++17",
+		"-w",
+		"-dM",
+		"-E",
+		"/opt/homebrew/share/cmake/Modules/CMakeCXXCompilerABI.cpp"
+	],
+	"MOC_PREDEFS_FILE" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/graph_core_autogen/moc_predefs.h",
+	"MOC_RELAXED_MODE" : false,
+	"MOC_SKIP" : [],
+	"MULTI_CONFIG" : false,
+	"PARALLEL" : 10,
+	"PARSE_CACHE_FILE" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/CMakeFiles/graph_core_autogen.dir/ParseCache.txt",
+	"QT_MOC_EXECUTABLE" : "/opt/homebrew/share/qt/libexec/moc",
+	"QT_UIC_EXECUTABLE" : "/opt/homebrew/share/qt/libexec/uic",
+	"QT_VERSION_MAJOR" : 6,
+	"QT_VERSION_MINOR" : 10,
+	"SETTINGS_FILE" : "/Users/josephsenanobrien/repos/graph_draw/graph_core/CMakeFiles/graph_core_autogen.dir/AutogenUsed.txt",
+	"SOURCES" : 
+	[
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphedge.cpp",
+			"MU",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphnode.cpp",
+			"MU",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphscene.cpp",
+			"MU",
+			null
+		],
+		[
+			"/Users/josephsenanobrien/repos/graph_draw/graph_core/graphview.cpp",
+			"MU",
+			null
+		]
+	],
+	"UIC_OPTIONS" : [],
+	"UIC_SEARCH_PATHS" : [],
+	"UIC_SKIP" : [],
+	"UIC_UI_FILES" : [],
+	"USE_BETTER_GRAPH" : true,
+	"VERBOSITY" : 0
+}

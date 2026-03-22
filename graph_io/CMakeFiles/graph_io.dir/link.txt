@@ -1,0 +1,2 @@
+/usr/bin/ar qc libgraph_io.a CMakeFiles/graph_io.dir/graph_io_autogen/mocs_compilation.cpp.o CMakeFiles/graph_io.dir/graphserializer.cpp.o
+/usr/bin/ranlib libgraph_io.a
