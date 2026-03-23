@@ -1,7 +1,12 @@
 #include "graphscene.h"
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QGraphicsSceneMouseEvent>
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QVBoxLayout>
 
 GraphScene::GraphScene(QObject* parent)
     : QGraphicsScene(parent)
@@ -206,16 +211,27 @@ void GraphScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
     const QPointF pos = event->scenePos();
 
     if (GraphNode* node = nodeAt(pos)) {
-        bool ok = false;
-        const QString name = QInputDialog::getText(
-            nullptr,
-            QStringLiteral("Rename Node"),
-            QStringLiteral("Name:"),
-            QLineEdit::Normal,
-            node->label(),
-            &ok);
-        if (ok && !name.trimmed().isEmpty())
-            node->setLabel(name.trimmed());
+        QDialog dlg;
+        dlg.setWindowTitle(QStringLiteral("Edit Node"));
+        auto* nameEdit    = new QLineEdit(node->label());
+        auto* commentEdit = new QLineEdit(node->comment());
+        commentEdit->setPlaceholderText(QStringLiteral("Optional"));
+        auto* form = new QFormLayout;
+        form->addRow(QStringLiteral("Name:"),    nameEdit);
+        form->addRow(QStringLiteral("Comment:"), commentEdit);
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        auto* layout = new QVBoxLayout(&dlg);
+        layout->addLayout(form);
+        layout->addWidget(buttons);
+
+        if (dlg.exec() == QDialog::Accepted) {
+            if (!nameEdit->text().trimmed().isEmpty())
+                node->setLabel(nameEdit->text().trimmed());
+            node->setComment(commentEdit->text().trimmed());
+        }
         return;
     }
 

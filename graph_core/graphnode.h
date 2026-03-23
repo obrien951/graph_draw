@@ -20,9 +20,11 @@ public:
 
     // kind() returns the semantic category (Class / Module / Function).
     // Named differently from Qt's type() to avoid any confusion.
-    NodeType kind()  const { return m_kind; }
-    QString  label() const { return m_label; }
-    void     setLabel(const QString& label);
+    NodeType kind()    const { return m_kind; }
+    QString  label()   const { return m_label; }
+    QString  comment() const { return m_comment; }
+    void setLabel(const QString& label);
+    void setComment(const QString& comment);
 
     // Non-owning edge registry.
     // QPointer<GraphEdge> nulls itself automatically if an edge is deleted
@@ -45,6 +47,7 @@ protected:
 private:
     NodeType                   m_kind;
     QString                    m_label;
+    QString                    m_comment;
     QList<QPointer<GraphEdge>> m_edges;   // non-owning, self-nulling observers
     QRectF                     m_rect;    // local shape rect, centered at origin
 

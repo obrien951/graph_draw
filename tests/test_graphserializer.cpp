@@ -41,6 +41,7 @@ TEST_CASE("Graph round-trips through a JSON file identically", "[graphserializer
 
     auto* moduleNode = new GraphNode(NodeType::Module, "CoreUtils");
     moduleNode->setPos(50.0, 120.0);
+    moduleNode->setComment("Shared utility functions used across the system.");
     original.addItem(moduleNode);
 
     auto* classNode = new GraphNode(NodeType::Class, "Parser");
@@ -67,7 +68,8 @@ TEST_CASE("Graph round-trips through a JSON file identically", "[graphserializer
 
     GraphNode* loadedModule = findNode(loaded, "CoreUtils");
     REQUIRE(loadedModule != nullptr);
-    REQUIRE(loadedModule->kind() == NodeType::Module);
+    REQUIRE(loadedModule->kind()    == NodeType::Module);
+    REQUIRE(loadedModule->comment() == "Shared utility functions used across the system.");
     REQUIRE(loadedModule->pos().x() == Catch::Approx(50.0));
     REQUIRE(loadedModule->pos().y() == Catch::Approx(120.0));
 

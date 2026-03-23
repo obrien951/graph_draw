@@ -41,6 +41,15 @@ void GraphNode::setLabel(const QString& label)
     update();
 }
 
+void GraphNode::setComment(const QString& comment)
+{
+    m_comment = comment;
+    // Surface the comment as a tooltip so it is visible on hover without
+    // requiring any layout changes to the node itself.
+    setToolTip(comment);
+    update();
+}
+
 void GraphNode::addEdge(GraphEdge* edge)
 {
     m_edges.append(QPointer<GraphEdge>(edge));

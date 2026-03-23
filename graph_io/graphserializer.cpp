@@ -52,6 +52,7 @@ bool GraphSerializer::saveToFile(const QString& filePath, const GraphScene* scen
         QJsonObject obj;
         obj[QStringLiteral("kind")]     = kindToString(node->kind());
         obj[QStringLiteral("name")]     = node->label();
+        obj[QStringLiteral("comment")]  = node->comment();
         obj[QStringLiteral("position")] = position;
         nodeArray.append(obj);
     }
@@ -123,6 +124,7 @@ bool GraphSerializer::loadFromFile(const QString& filePath, GraphScene* scene)
         }
         const QJsonObject pos = obj[QStringLiteral("position")].toObject();
         auto* node = new GraphNode(*kind, obj[QStringLiteral("name")].toString());
+        node->setComment(obj[QStringLiteral("comment")].toString());
         node->setPos(pos[QStringLiteral("x")].toDouble(),
                      pos[QStringLiteral("y")].toDouble());
         scene->addItem(node);
