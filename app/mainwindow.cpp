@@ -150,6 +150,11 @@ void MainWindow::buildToolbar()
 void MainWindow::buildMenus()
 {
     QMenu* file = menuBar()->addMenu(QStringLiteral("&File"));
+    file->addAction(QStringLiteral("&Save Graph…"), this, &MainWindow::saveGraph,
+                    QKeySequence::Save);
+    file->addAction(QStringLiteral("&Load Graph…"), this, &MainWindow::loadGraph,
+                    QKeySequence::Open);
+    file->addSeparator();
     file->addAction(QStringLiteral("&Export as PNG…"), this, &MainWindow::exportToPng,
                     QKeySequence(QStringLiteral("Ctrl+E")));
     file->addSeparator();
@@ -210,6 +215,36 @@ void MainWindow::exportToPng()
     else
         QMessageBox::warning(this, QStringLiteral("Export Failed"),
                              QStringLiteral("Could not write to %1").arg(path));
+}
+
+void MainWindow::saveGraph()
+{
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save Graph"),
+        QStringLiteral("graph.json"),
+        QStringLiteral("Graph Files (*.json);;All Files (*)"));
+    if (path.isEmpty()) return;
+
+    GraphSerializer serializer;
+    if (serializer.saveToFile(path, m_scene))
+        statusBar()->showMessage(QStringLiteral("Saved to %1").arg(path), 4000);
+    else
+        QMessageBox::warning(this, QStringLiteral("Save Failed"), serializer.lastError());
+}
+
+void MainWindow::loadGraph()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Load Graph"),
+        QString(),
+        QStringLiteral("Graph Files (*.json);;All Files (*)"));
+    if (path.isEmpty()) return;
+
+    GraphSerializer serializer;
+    if (serializer.loadFromFile(path, m_scene))
+        statusBar()->showMessage(QStringLiteral("Loaded from %1").arg(path), 4000);
+    else
+        QMessageBox::warning(this, QStringLiteral("Load Failed"), serializer.lastError());
 }
 
 void MainWindow::fitView()

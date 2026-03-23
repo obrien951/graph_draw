@@ -14,6 +14,9 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 add_subdirectory(graph_core)
 add_subdirectory(graph_io)
 
+enable_testing()
+add_subdirectory(tests)
+
 add_executable(graph_draw
     app/main.cpp
     app/mainwindow.cpp

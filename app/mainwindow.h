@@ -14,6 +14,8 @@ public:
 
 private slots:
     void exportToPng();
+    void saveGraph();
+    void loadGraph();
     void fitView();
     void zoomIn();
     void zoomOut();
