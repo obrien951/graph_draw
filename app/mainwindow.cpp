@@ -194,7 +194,9 @@ void MainWindow::exportToPng()
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export PNG"),
         QStringLiteral("graph.png"),
-        QStringLiteral("PNG Images (*.png);;All Files (*)"));
+        QStringLiteral("PNG Images (*.png);;All Files (*)"),
+        nullptr,
+        QFileDialog::DontUseNativeDialog);
     if (path.isEmpty()) return;
 
     QRectF content = m_scene->itemsBoundingRect().adjusted(-40, -40, 40, 40);
@@ -222,7 +224,9 @@ void MainWindow::saveGraph()
     const QString path = QFileDialog::getSaveFileName(
         this, QStringLiteral("Save Graph"),
         QStringLiteral("graph.json"),
-        QStringLiteral("Graph Files (*.json);;All Files (*)"));
+        QStringLiteral("Graph Files (*.json);;All Files (*)"),
+        nullptr,
+        QFileDialog::DontUseNativeDialog);
     if (path.isEmpty()) return;
 
     GraphSerializer serializer;
@@ -237,7 +241,9 @@ void MainWindow::loadGraph()
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Load Graph"),
         QString(),
-        QStringLiteral("Graph Files (*.json);;All Files (*)"));
+        QStringLiteral("Graph Files (*.json);;All Files (*)"),
+        nullptr,
+        QFileDialog::DontUseNativeDialog);
     if (path.isEmpty()) return;
 
     GraphSerializer serializer;

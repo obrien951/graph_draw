@@ -1,7 +1,9 @@
 #include "graphnode.h"
+#include <QGraphicsDropShadowEffect>
+#include <QGraphicsSceneHoverEvent>
 #include <QPainter>
 #include <QStyleOptionGraphicsItem>
-#include <QGraphicsDropShadowEffect>
+#include <QToolTip>
 
 GraphNode::GraphNode(NodeType kind, const QString& label, QGraphicsItem* parent)
     : QGraphicsObject(parent)
@@ -14,6 +16,7 @@ GraphNode::GraphNode(NodeType kind, const QString& label, QGraphicsItem* parent)
     // Required so itemChange receives ItemScenePositionHasChanged,
     // which we use to push geometry updates to connected edges.
     setFlag(QGraphicsItem::ItemSendsScenePositionChanges);
+    setAcceptHoverEvents(true);
     setZValue(1);   // nodes sit above edges (edges are z=0)
 
     auto* shadow = new QGraphicsDropShadowEffect;
@@ -211,4 +214,17 @@ QVariant GraphNode::itemChange(GraphicsItemChange change, const QVariant& value)
         }
     }
     return QGraphicsObject::itemChange(change, value);
+}
+
+void GraphNode::hoverEnterEvent(QGraphicsSceneHoverEvent* event)
+{
+    if (!m_comment.isEmpty())
+        QToolTip::showText(event->screenPos(), m_comment);
+    QGraphicsObject::hoverEnterEvent(event);
+}
+
+void GraphNode::hoverLeaveEvent(QGraphicsSceneHoverEvent* event)
+{
+    QToolTip::hideText();
+    QGraphicsObject::hoverLeaveEvent(event);
 }
