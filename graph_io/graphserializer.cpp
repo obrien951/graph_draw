@@ -50,10 +50,11 @@ bool GraphSerializer::saveToFile(const QString& filePath, const GraphScene* scen
         position[QStringLiteral("y")] = node->pos().y();
 
         QJsonObject obj;
-        obj[QStringLiteral("kind")]     = kindToString(node->kind());
-        obj[QStringLiteral("name")]     = node->label();
-        obj[QStringLiteral("comment")]  = node->comment();
-        obj[QStringLiteral("position")] = position;
+        obj[QStringLiteral("kind")]        = kindToString(node->kind());
+        obj[QStringLiteral("name")]        = node->label();
+        obj[QStringLiteral("comment")]     = node->comment();
+        obj[QStringLiteral("implemented")] = node->isImplemented();
+        obj[QStringLiteral("position")]    = position;
         nodeArray.append(obj);
     }
 
@@ -125,6 +126,9 @@ bool GraphSerializer::loadFromFile(const QString& filePath, GraphScene* scene)
         const QJsonObject pos = obj[QStringLiteral("position")].toObject();
         auto* node = new GraphNode(*kind, obj[QStringLiteral("name")].toString());
         node->setComment(obj[QStringLiteral("comment")].toString());
+        // 'implemented' is optional so graphs written before dependency tracking
+        // still load; missing means "not implemented yet".
+        node->setImplemented(obj[QStringLiteral("implemented")].toBool(false));
         node->setPos(pos[QStringLiteral("x")].toDouble(),
                      pos[QStringLiteral("y")].toDouble());
         scene->addItem(node);

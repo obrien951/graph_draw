@@ -42,10 +42,12 @@ TEST_CASE("Graph round-trips through a JSON file identically", "[graphserializer
     auto* moduleNode = new GraphNode(NodeType::Module, "CoreUtils");
     moduleNode->setPos(50.0, 120.0);
     moduleNode->setComment("Shared utility functions used across the system.");
+    moduleNode->setImplemented(true);
     original.addItem(moduleNode);
 
     auto* classNode = new GraphNode(NodeType::Class, "Parser");
     classNode->setPos(300.0, 80.0);
+    classNode->setImplemented(false);
     original.addItem(classNode);
 
     auto* edge = new GraphEdge(moduleNode, classNode, "depends on");
@@ -70,12 +72,14 @@ TEST_CASE("Graph round-trips through a JSON file identically", "[graphserializer
     REQUIRE(loadedModule != nullptr);
     REQUIRE(loadedModule->kind()    == NodeType::Module);
     REQUIRE(loadedModule->comment() == "Shared utility functions used across the system.");
+    REQUIRE(loadedModule->isImplemented() == true);
     REQUIRE(loadedModule->pos().x() == Catch::Approx(50.0));
     REQUIRE(loadedModule->pos().y() == Catch::Approx(120.0));
 
     GraphNode* loadedClass = findNode(loaded, "Parser");
     REQUIRE(loadedClass != nullptr);
     REQUIRE(loadedClass->kind() == NodeType::Class);
+    REQUIRE(loadedClass->isImplemented() == false);
     REQUIRE(loadedClass->pos().x() == Catch::Approx(300.0));
     REQUIRE(loadedClass->pos().y() == Catch::Approx(80.0));
 

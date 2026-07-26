@@ -11,6 +11,7 @@ add_executable(graph_draw_tests
     qt_app_fixture.cpp
     test_graphscene.cpp
     test_graphserializer.cpp
+    test_dependencies.cpp
 )
 
 target_link_libraries(graph_draw_tests PRIVATE

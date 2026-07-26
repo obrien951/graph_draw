@@ -29,6 +29,18 @@ public:
     // Removes all items in safe order (edges first, then nodes)
     void clearAll();
 
+    // ── Dependency tracking (graph-wide) ────────────────────────────────────
+    // All GraphNodes currently in the scene.
+    QList<GraphNode*> nodes() const;
+
+    // Unimplemented nodes whose every dependency is already implemented — the
+    // nodes that are safe to implement next without stubbing anything out.
+    // (Leaf nodes with no dependencies are included.)
+    QList<GraphNode*> readyToImplement() const;
+
+    // Unimplemented nodes that still have at least one unimplemented dependency.
+    QList<GraphNode*> blocked() const;
+
 signals:
     void modeChanged(EditMode mode);
 

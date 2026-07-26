@@ -5,10 +5,11 @@ class GraphScene;
 
 // GraphSerializer provides save and load operations for a GraphScene.
 //
-// The intended format is JSON: nodes are stored as an array of objects with
-// type, label, and position; edges reference nodes by index and carry an
-// optional label.  Neither operation is implemented yet — both return false
-// with an explanatory error string so callers can degrade gracefully.
+// Format is JSON: nodes are stored as an array of objects with kind, name,
+// comment (the implementation prompt/description), an `implemented` flag, and
+// position; edges reference nodes by index and carry an optional comment.
+// The `implemented` flag is optional on load and defaults to false, so graphs
+// written before dependency tracking still load cleanly.
 class GraphSerializer {
 public:
     GraphSerializer() = default;

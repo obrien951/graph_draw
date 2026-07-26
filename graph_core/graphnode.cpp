@@ -53,6 +53,62 @@ void GraphNode::setComment(const QString& comment)
     update();
 }
 
+void GraphNode::setImplemented(bool implemented)
+{
+    m_implemented = implemented;
+    update();
+}
+
+QList<GraphNode*> GraphNode::dependencies() const
+{
+    // Outgoing edges (this node is the source) point at the nodes we depend on.
+    QList<GraphNode*> result;
+    for (const QPointer<GraphEdge>& edgePtr : m_edges) {
+        GraphEdge* edge = edgePtr.data();
+        if (!edge || edge->source() != this)
+            continue;
+        GraphNode* target = edge->target();
+        if (target && target != this && !result.contains(target))
+            result.append(target);
+    }
+    return result;
+}
+
+QList<GraphNode*> GraphNode::dependents() const
+{
+    // Incoming edges (this node is the target) come from nodes that depend on us.
+    QList<GraphNode*> result;
+    for (const QPointer<GraphEdge>& edgePtr : m_edges) {
+        GraphEdge* edge = edgePtr.data();
+        if (!edge || edge->target() != this)
+            continue;
+        GraphNode* source = edge->source();
+        if (source && source != this && !result.contains(source))
+            result.append(source);
+    }
+    return result;
+}
+
+QList<GraphNode*> GraphNode::unimplementedDependencies() const
+{
+    QList<GraphNode*> result;
+    for (GraphNode* dep : dependencies())
+        if (!dep->isImplemented())
+            result.append(dep);
+    return result;
+}
+
+DependencyStatus GraphNode::dependencyStatus() const
+{
+    const QList<GraphNode*> deps = dependencies();
+    if (deps.isEmpty())
+        return DependencyStatus::NoDependencies;
+    for (const GraphNode* dep : deps)
+        if (!dep->isImplemented())
+            return DependencyStatus::Blocked;
+    return DependencyStatus::Ready;
+}
+
 void GraphNode::addEdge(GraphEdge* edge)
 {
     m_edges.append(QPointer<GraphEdge>(edge));
@@ -203,6 +259,33 @@ void GraphNode::paint(QPainter* painter,
     painter->setFont(labelFont);
     painter->setPen(Qt::white);
     painter->drawText(bodyRect, Qt::AlignCenter | Qt::TextWordWrap, m_label);
+
+    // ── Implementation status badge (top-right corner) ───────────────────────
+    // A filled green check marks an implemented node; a hollow grey ring marks
+    // one that is still to be built. This makes dependency state visible at a
+    // glance without opening the edit dialog.
+    const qreal r = 7.0;
+    const QPointF badgeCenter(m_rect.right() - r - 2.0, m_rect.top() + r + 2.0);
+    const QRectF badgeRect(badgeCenter.x() - r, badgeCenter.y() - r, 2 * r, 2 * r);
+
+    if (m_implemented) {
+        painter->setPen(QPen(QColor(255, 255, 255, 220), 1.0));
+        painter->setBrush(QColor(46, 160, 67));   // green
+        painter->drawEllipse(badgeRect);
+
+        // Checkmark
+        QPen tick(Qt::white, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        painter->setPen(tick);
+        const QPointF p1(badgeCenter.x() - 3.2, badgeCenter.y() + 0.3);
+        const QPointF p2(badgeCenter.x() - 0.8, badgeCenter.y() + 2.8);
+        const QPointF p3(badgeCenter.x() + 3.4, badgeCenter.y() - 2.6);
+        painter->drawLine(p1, p2);
+        painter->drawLine(p2, p3);
+    } else {
+        painter->setPen(QPen(QColor(255, 255, 255, 160), 1.4, Qt::DashLine));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawEllipse(badgeRect);
+    }
 }
 
 QVariant GraphNode::itemChange(GraphicsItemChange change, const QVariant& value)

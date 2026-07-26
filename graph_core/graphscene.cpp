@@ -1,4 +1,5 @@
 #include "graphscene.h"
+#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -6,6 +7,7 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QVBoxLayout>
 
 GraphScene::GraphScene(QObject* parent)
@@ -68,6 +70,42 @@ void GraphScene::clearAll()
             delete item;
         }
     }
+}
+
+// ── Dependency tracking (graph-wide) ────────────────────────────────────────────
+
+QList<GraphNode*> GraphScene::nodes() const
+{
+    QList<GraphNode*> result;
+    for (QGraphicsItem* item : items())
+        if (auto* n = qgraphicsitem_cast<GraphNode*>(item))
+            result.append(n);
+    return result;
+}
+
+QList<GraphNode*> GraphScene::readyToImplement() const
+{
+    QList<GraphNode*> result;
+    for (GraphNode* n : nodes()) {
+        if (n->isImplemented())
+            continue;
+        // Ready or leaf (no dependencies) — nothing blocks implementation.
+        if (n->dependencyStatus() != DependencyStatus::Blocked)
+            result.append(n);
+    }
+    return result;
+}
+
+QList<GraphNode*> GraphScene::blocked() const
+{
+    QList<GraphNode*> result;
+    for (GraphNode* n : nodes()) {
+        if (n->isImplemented())
+            continue;
+        if (n->dependencyStatus() == DependencyStatus::Blocked)
+            result.append(n);
+    }
+    return result;
 }
 
 // ── Item lookup ───────────────────────────────────────────────────────────────
@@ -213,12 +251,26 @@ void GraphScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
     if (GraphNode* node = nodeAt(pos)) {
         QDialog dlg;
         dlg.setWindowTitle(QStringLiteral("Edit Node"));
-        auto* nameEdit    = new QLineEdit(node->label());
-        auto* commentEdit = new QLineEdit(node->comment());
-        commentEdit->setPlaceholderText(QStringLiteral("Optional"));
+
+        auto* nameEdit = new QLineEdit(node->label());
+
+        // The description is the implementation prompt for the module/class/
+        // function this node represents, so it needs room for multi-line text.
+        auto* descEdit = new QPlainTextEdit(node->comment());
+        descEdit->setPlaceholderText(
+            QStringLiteral("Prompt / description used to implement this node"));
+        descEdit->setMinimumSize(360, 140);
+
+        // Lets the user mark whether the thing this node names is implemented.
+        // Dependency tracking reads this flag across the graph.
+        auto* implementedCheck = new QCheckBox(QStringLiteral("Implemented"));
+        implementedCheck->setChecked(node->isImplemented());
+
         auto* form = new QFormLayout;
-        form->addRow(QStringLiteral("Name:"),    nameEdit);
-        form->addRow(QStringLiteral("Comment:"), commentEdit);
+        form->addRow(QStringLiteral("Name:"),        nameEdit);
+        form->addRow(QStringLiteral("Description:"), descEdit);
+        form->addRow(QString(),                      implementedCheck);
+
         auto* buttons = new QDialogButtonBox(
             QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
         QObject::connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -230,7 +282,8 @@ void GraphScene::mouseDoubleClickEvent(QGraphicsSceneMouseEvent* event)
         if (dlg.exec() == QDialog::Accepted) {
             if (!nameEdit->text().trimmed().isEmpty())
                 node->setLabel(nameEdit->text().trimmed());
-            node->setComment(commentEdit->text().trimmed());
+            node->setComment(descEdit->toPlainText().trimmed());
+            node->setImplemented(implementedCheck->isChecked());
         }
         return;
     }
