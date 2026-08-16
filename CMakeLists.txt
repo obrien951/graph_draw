@@ -13,6 +13,7 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
 add_subdirectory(graph_core)
 add_subdirectory(graph_io)
+add_subdirectory(graph_analyze)
 
 enable_testing()
 add_subdirectory(tests)
@@ -24,6 +25,18 @@ add_executable(graph_draw
 )
 
 target_link_libraries(graph_draw PRIVATE
+    graph_core
+    graph_io
+    Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+# Command-line tool: scan a C++ repo and emit a dependency graph JSON.
+add_executable(repo_to_graph
+    analyze/main.cpp
+)
+
+target_link_libraries(repo_to_graph PRIVATE
+    graph_analyze
     graph_core
     graph_io
     Qt${QT_VERSION_MAJOR}::Widgets

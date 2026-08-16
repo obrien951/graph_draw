@@ -12,11 +12,13 @@ add_executable(graph_draw_tests
     test_graphscene.cpp
     test_graphserializer.cpp
     test_dependencies.cpp
+    test_repoanalyzer.cpp
 )
 
 target_link_libraries(graph_draw_tests PRIVATE
     graph_core
     graph_io
+    graph_analyze
     Catch2::Catch2WithMain
     Qt${QT_VERSION_MAJOR}::Widgets
 )
