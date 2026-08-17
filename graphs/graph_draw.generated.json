@@ -1,0 +1,1476 @@
+{
+    "edges": [
+        {
+            "comment": "depends on",
+            "destination": 87,
+            "origin": 86
+        },
+        {
+            "comment": "depends on",
+            "destination": 89,
+            "origin": 88
+        },
+        {
+            "comment": "depends on",
+            "destination": 86,
+            "origin": 88
+        },
+        {
+            "comment": "depends on",
+            "destination": 87,
+            "origin": 88
+        },
+        {
+            "comment": "depends on",
+            "destination": 86,
+            "origin": 89
+        },
+        {
+            "comment": "depends on",
+            "destination": 87,
+            "origin": 89
+        },
+        {
+            "comment": "depends on",
+            "destination": 86,
+            "origin": 90
+        },
+        {
+            "comment": "depends on",
+            "destination": 87,
+            "origin": 90
+        },
+        {
+            "comment": "depends on",
+            "destination": 89,
+            "origin": 90
+        },
+        {
+            "comment": "depends on",
+            "destination": 86,
+            "origin": 91
+        },
+        {
+            "comment": "depends on",
+            "destination": 87,
+            "origin": 91
+        },
+        {
+            "comment": "provides",
+            "destination": 0,
+            "origin": 76
+        },
+        {
+            "comment": "provides",
+            "destination": 1,
+            "origin": 76
+        },
+        {
+            "comment": "provides",
+            "destination": 2,
+            "origin": 76
+        },
+        {
+            "comment": "provides",
+            "destination": 3,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 4,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 5,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 6,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 7,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 8,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 9,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 10,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 11,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 12,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 13,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 14,
+            "origin": 77
+        },
+        {
+            "comment": "provides",
+            "destination": 15,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 16,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 17,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 18,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 19,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 20,
+            "origin": 78
+        },
+        {
+            "comment": "provides",
+            "destination": 21,
+            "origin": 78
+        },
+        {
+            "comment": "uses",
+            "destination": 77,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 22,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 23,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 24,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 25,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 26,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 27,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 28,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 29,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 30,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 31,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 32,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 33,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 34,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 35,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 36,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 37,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 38,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 39,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 40,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 41,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 42,
+            "origin": 79
+        },
+        {
+            "comment": "provides",
+            "destination": 43,
+            "origin": 79
+        },
+        {
+            "comment": "uses",
+            "destination": 77,
+            "origin": 80
+        },
+        {
+            "comment": "uses",
+            "destination": 79,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 44,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 45,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 46,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 47,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 48,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 49,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 50,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 51,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 52,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 53,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 54,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 55,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 56,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 57,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 58,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 59,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 60,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 61,
+            "origin": 80
+        },
+        {
+            "comment": "provides",
+            "destination": 62,
+            "origin": 81
+        },
+        {
+            "comment": "provides",
+            "destination": 63,
+            "origin": 81
+        },
+        {
+            "comment": "uses",
+            "destination": 77,
+            "origin": 82
+        },
+        {
+            "comment": "uses",
+            "destination": 79,
+            "origin": 82
+        },
+        {
+            "comment": "uses",
+            "destination": 80,
+            "origin": 82
+        },
+        {
+            "comment": "uses",
+            "destination": 84,
+            "origin": 82
+        },
+        {
+            "comment": "uses",
+            "destination": 77,
+            "origin": 83
+        },
+        {
+            "comment": "uses",
+            "destination": 79,
+            "origin": 83
+        },
+        {
+            "comment": "uses",
+            "destination": 80,
+            "origin": 83
+        },
+        {
+            "comment": "uses",
+            "destination": 84,
+            "origin": 83
+        },
+        {
+            "comment": "provides",
+            "destination": 64,
+            "origin": 84
+        },
+        {
+            "comment": "provides",
+            "destination": 65,
+            "origin": 84
+        },
+        {
+            "comment": "uses",
+            "destination": 78,
+            "origin": 85
+        },
+        {
+            "comment": "uses",
+            "destination": 80,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 66,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 67,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 68,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 69,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 70,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 71,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 72,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 73,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 74,
+            "origin": 85
+        },
+        {
+            "comment": "provides",
+            "destination": 75,
+            "origin": 85
+        },
+        {
+            "comment": "contains",
+            "destination": 76,
+            "origin": 86
+        },
+        {
+            "comment": "contains",
+            "destination": 77,
+            "origin": 87
+        },
+        {
+            "comment": "contains",
+            "destination": 78,
+            "origin": 87
+        },
+        {
+            "comment": "contains",
+            "destination": 79,
+            "origin": 87
+        },
+        {
+            "comment": "contains",
+            "destination": 80,
+            "origin": 87
+        },
+        {
+            "comment": "contains",
+            "destination": 81,
+            "origin": 88
+        },
+        {
+            "comment": "contains",
+            "destination": 82,
+            "origin": 89
+        },
+        {
+            "comment": "contains",
+            "destination": 83,
+            "origin": 89
+        },
+        {
+            "comment": "contains",
+            "destination": 84,
+            "origin": 89
+        },
+        {
+            "comment": "contains",
+            "destination": 85,
+            "origin": 91
+        }
+    ],
+    "nodes": [
+        {
+            "comment": "Member function GraphSerializer::lastError of class GraphSerializer (graph_io/graphserializer.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphSerializer::lastError",
+            "position": {
+                "x": 540,
+                "y": 1420
+            }
+        },
+        {
+            "comment": "Member function GraphSerializer::loadFromFile of class GraphSerializer (graph_io/graphserializer.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphSerializer::loadFromFile",
+            "position": {
+                "x": 360,
+                "y": 1420
+            }
+        },
+        {
+            "comment": "Member function GraphSerializer::saveToFile of class GraphSerializer (graph_io/graphserializer.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphSerializer::saveToFile",
+            "position": {
+                "x": 180,
+                "y": 1420
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::recomputeGeometry of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::recomputeGeometry",
+            "position": {
+                "x": 0,
+                "y": 1420
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::paint of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::paint",
+            "position": {
+                "x": 1980,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::shape of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::shape",
+            "position": {
+                "x": 1800,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::boundingRect of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::boundingRect",
+            "position": {
+                "x": 1620,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::updateGeometry of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::updateGeometry",
+            "position": {
+                "x": 1440,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::clearTarget of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::clearTarget",
+            "position": {
+                "x": 1260,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::clearSource of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::clearSource",
+            "position": {
+                "x": 1080,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::setLabel of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::setLabel",
+            "position": {
+                "x": 900,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::label of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::label",
+            "position": {
+                "x": 720,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::target of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::target",
+            "position": {
+                "x": 540,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::source of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::source",
+            "position": {
+                "x": 360,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphEdge::type of class GraphEdge (graph_core/graphedge.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphEdge::type",
+            "position": {
+                "x": 180,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphView::drawBackground of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::drawBackground",
+            "position": {
+                "x": 0,
+                "y": 1290
+            }
+        },
+        {
+            "comment": "Member function GraphView::keyReleaseEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::keyReleaseEvent",
+            "position": {
+                "x": 1980,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphView::keyPressEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::keyPressEvent",
+            "position": {
+                "x": 1800,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphView::mouseReleaseEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::mouseReleaseEvent",
+            "position": {
+                "x": 1620,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphView::mouseMoveEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::mouseMoveEvent",
+            "position": {
+                "x": 1440,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphView::mousePressEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::mousePressEvent",
+            "position": {
+                "x": 1260,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphView::wheelEvent of class GraphView (graph_core/graphview.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphView::wheelEvent",
+            "position": {
+                "x": 1080,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::hoverLeaveEvent of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::hoverLeaveEvent",
+            "position": {
+                "x": 900,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::hoverEnterEvent of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::hoverEnterEvent",
+            "position": {
+                "x": 720,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::itemChange of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::itemChange",
+            "position": {
+                "x": 540,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::paint of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::paint",
+            "position": {
+                "x": 360,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::shape of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::shape",
+            "position": {
+                "x": 180,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::boundingRect of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::boundingRect",
+            "position": {
+                "x": 0,
+                "y": 1160
+            }
+        },
+        {
+            "comment": "Member function GraphNode::borderPoint of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::borderPoint",
+            "position": {
+                "x": 1980,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::edges of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::edges",
+            "position": {
+                "x": 1800,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::removeEdge of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::removeEdge",
+            "position": {
+                "x": 1620,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::addEdge of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::addEdge",
+            "position": {
+                "x": 1440,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::dependencyStatus of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::dependencyStatus",
+            "position": {
+                "x": 1260,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::unimplementedDependencies of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::unimplementedDependencies",
+            "position": {
+                "x": 1080,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::dependents of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::dependents",
+            "position": {
+                "x": 900,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::dependencies of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::dependencies",
+            "position": {
+                "x": 720,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::setImplemented of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::setImplemented",
+            "position": {
+                "x": 540,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::isImplemented of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::isImplemented",
+            "position": {
+                "x": 360,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::setComment of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::setComment",
+            "position": {
+                "x": 180,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::setLabel of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::setLabel",
+            "position": {
+                "x": 0,
+                "y": 1030
+            }
+        },
+        {
+            "comment": "Member function GraphNode::comment of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::comment",
+            "position": {
+                "x": 1980,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphNode::label of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::label",
+            "position": {
+                "x": 1800,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphNode::kind of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::kind",
+            "position": {
+                "x": 1620,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphNode::type of class GraphNode (graph_core/graphnode.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphNode::type",
+            "position": {
+                "x": 1440,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::cancelEdgeCreation of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::cancelEdgeCreation",
+            "position": {
+                "x": 1260,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::handleEdgeClick of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::handleEdgeClick",
+            "position": {
+                "x": 1080,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::addNodeAt of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::addNodeAt",
+            "position": {
+                "x": 900,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::edgeAt of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::edgeAt",
+            "position": {
+                "x": 720,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::nodeAt of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::nodeAt",
+            "position": {
+                "x": 540,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::keyPressEvent of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::keyPressEvent",
+            "position": {
+                "x": 360,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::mouseDoubleClickEvent of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::mouseDoubleClickEvent",
+            "position": {
+                "x": 180,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::mouseMoveEvent of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::mouseMoveEvent",
+            "position": {
+                "x": 0,
+                "y": 900
+            }
+        },
+        {
+            "comment": "Member function GraphScene::mousePressEvent of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::mousePressEvent",
+            "position": {
+                "x": 1980,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::modeChanged of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::modeChanged",
+            "position": {
+                "x": 1800,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::blocked of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::blocked",
+            "position": {
+                "x": 1620,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::readyToImplement of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::readyToImplement",
+            "position": {
+                "x": 1440,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::nodes of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::nodes",
+            "position": {
+                "x": 1260,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::clearAll of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::clearAll",
+            "position": {
+                "x": 1080,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::deleteEdge of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::deleteEdge",
+            "position": {
+                "x": 900,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::deleteNode of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::deleteNode",
+            "position": {
+                "x": 720,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::mode of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::mode",
+            "position": {
+                "x": 540,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function GraphScene::setMode of class GraphScene (graph_core/graphscene.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "GraphScene::setMode",
+            "position": {
+                "x": 360,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function QtAppListener::testRunEnded of class QtAppListener (tests/qt_app_fixture.cpp).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "QtAppListener::testRunEnded",
+            "position": {
+                "x": 180,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function QtAppListener::testRunStarting of class QtAppListener (tests/qt_app_fixture.cpp).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "QtAppListener::testRunStarting",
+            "position": {
+                "x": 0,
+                "y": 770
+            }
+        },
+        {
+            "comment": "Member function RepoAnalyzer::lastError of class RepoAnalyzer (graph_analyze/repoanalyzer.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "RepoAnalyzer::lastError",
+            "position": {
+                "x": 1980,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function RepoAnalyzer::analyze of class RepoAnalyzer (graph_analyze/repoanalyzer.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "RepoAnalyzer::analyze",
+            "position": {
+                "x": 1800,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::makeNodeIcon of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::makeNodeIcon",
+            "position": {
+                "x": 1620,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::buildMenus of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::buildMenus",
+            "position": {
+                "x": 1440,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::buildToolbar of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::buildToolbar",
+            "position": {
+                "x": 1260,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::onModeChanged of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::onModeChanged",
+            "position": {
+                "x": 1080,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::zoomOut of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::zoomOut",
+            "position": {
+                "x": 900,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::zoomIn of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::zoomIn",
+            "position": {
+                "x": 720,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::fitView of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::fitView",
+            "position": {
+                "x": 540,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::loadGraph of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::loadGraph",
+            "position": {
+                "x": 360,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::saveGraph of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::saveGraph",
+            "position": {
+                "x": 180,
+                "y": 640
+            }
+        },
+        {
+            "comment": "Member function MainWindow::exportToPng of class MainWindow (app/mainwindow.h).",
+            "implemented": true,
+            "kind": "Function",
+            "name": "MainWindow::exportToPng",
+            "position": {
+                "x": 0,
+                "y": 640
+            }
+        },
+        {
+            "comment": "GraphSerializer provides save and load operations for a GraphScene. Format is JSON: nodes are stored as an array of objects with kind, name, comment (the implementation prompt/description), an `implemented` flag, and position; edges reference nodes by index and carry an optional comment. The `implemented` flag is optional on load and defaults to false, so graphs written before dependency tracking still load cleanly.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "GraphSerializer",
+            "position": {
+                "x": 1620,
+                "y": 320
+            }
+        },
+        {
+            "comment": "class GraphEdge declared in graph_core/graphedge.h.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "GraphEdge",
+            "position": {
+                "x": 1440,
+                "y": 320
+            }
+        },
+        {
+            "comment": "class GraphView declared in graph_core/graphview.h.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "GraphView",
+            "position": {
+                "x": 1260,
+                "y": 320
+            }
+        },
+        {
+            "comment": "class GraphNode declared in graph_core/graphnode.h.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "GraphNode",
+            "position": {
+                "x": 1080,
+                "y": 320
+            }
+        },
+        {
+            "comment": "class GraphScene declared in graph_core/graphscene.h.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "GraphScene",
+            "position": {
+                "x": 900,
+                "y": 320
+            }
+        },
+        {
+            "comment": "Catch2 v3 session-level setup/teardown via EventListenerBase. testRunStarting fires once before any test; testRunEnded fires after all of them, giving every test case a live QApplication for the full run. On headless / CI systems set QT_QPA_PLATFORM=offscreen.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "QtAppListener",
+            "position": {
+                "x": 720,
+                "y": 320
+            }
+        },
+        {
+            "comment": "struct ClassInfo declared in graph_analyze/repoanalyzer.cpp.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "ClassInfo",
+            "position": {
+                "x": 540,
+                "y": 320
+            }
+        },
+        {
+            "comment": "struct ModuleInfo declared in graph_analyze/repoanalyzer.cpp.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "ModuleInfo",
+            "position": {
+                "x": 360,
+                "y": 320
+            }
+        },
+        {
+            "comment": "RepoAnalyzer scans a C++ repository and builds a module/class/function dependency graph into a GraphScene, in the same shape as graphs/graph_draw.json. It is a self-contained heuristic scanner — no libclang, no compiler needed: • Modules come from CMake add_library / add_executable targets (a directory fallback is used for sources not owned by any target). • Classes come from `class` / `struct` definitions in the sources. • Functions come from member functions declared in those classes. Edges follow the graph_draw convention \"A → B means A depends on B\": module → class (\"contains\") class → function (\"provides\") class → base class (\"inherits\") class → class (\"uses\", inferred from #include) module → module (\"depends on\", from target_link_libraries) Every discovered node is marked implemented (the code already exists). Because the scanner is heuristic, templates, macros, and other exotic constructs may be missed; results are meant as a faithful-enough starting graph, not a proof.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "RepoAnalyzer",
+            "position": {
+                "x": 180,
+                "y": 320
+            }
+        },
+        {
+            "comment": "class MainWindow declared in app/mainwindow.h.",
+            "implemented": true,
+            "kind": "Class",
+            "name": "MainWindow",
+            "position": {
+                "x": 0,
+                "y": 320
+            }
+        },
+        {
+            "comment": "CMake library target \"graph_io\" (graph_io), 2 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "graph_io",
+            "position": {
+                "x": 900,
+                "y": 0
+            }
+        },
+        {
+            "comment": "CMake library target \"graph_core\" (graph_core), 8 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "graph_core",
+            "position": {
+                "x": 720,
+                "y": 0
+            }
+        },
+        {
+            "comment": "CMake executable target \"graph_draw_tests\" (tests), 5 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "graph_draw_tests",
+            "position": {
+                "x": 540,
+                "y": 0
+            }
+        },
+        {
+            "comment": "CMake library target \"graph_analyze\" (graph_analyze), 2 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "graph_analyze",
+            "position": {
+                "x": 360,
+                "y": 0
+            }
+        },
+        {
+            "comment": "CMake executable target \"repo_to_graph\" (.), 1 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "repo_to_graph",
+            "position": {
+                "x": 180,
+                "y": 0
+            }
+        },
+        {
+            "comment": "CMake executable target \"graph_draw\" (.), 3 source file(s).",
+            "implemented": true,
+            "kind": "Module",
+            "name": "graph_draw",
+            "position": {
+                "x": 0,
+                "y": 0
+            }
+        }
+    ]
+}

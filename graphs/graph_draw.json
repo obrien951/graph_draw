@@ -1,0 +1,139 @@
+{
+    "nodes": [
+        {
+            "kind": "Module",
+            "name": "graph_core",
+            "comment": "Static library holding the domain model and interactive scene: GraphNode, GraphEdge, GraphScene, and GraphView. Build it as its own target with PUBLIC include dirs so downstream libraries link against it. Depends on Qt Widgets only.",
+            "implemented": true,
+            "position": { "x": 0.0, "y": 0.0 }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_io",
+            "comment": "Static library that reads and writes a GraphScene as JSON. Keep it separate from graph_core so serialization concerns never leak into the model. Links against graph_core.",
+            "implemented": true,
+            "position": { "x": 420.0, "y": 0.0 }
+        },
+        {
+            "kind": "Module",
+            "name": "app",
+            "comment": "Thin executable integration root: main.cpp constructs a MainWindow and runs the Qt event loop. It links graph_core and graph_io but contains no domain logic itself.",
+            "implemented": true,
+            "position": { "x": 840.0, "y": 0.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphNode",
+            "comment": "A QGraphicsObject representing a Module, Class, or Function. Holds a label, a comment (which doubles as the implementation prompt), an `implemented` flag, and a non-owning self-nulling registry of incident edges. Exposes dependency queries derived from edge direction (A -> B means A depends on B). Draw a shape per kind with a header stereotype strip.",
+            "implemented": true,
+            "position": { "x": -140.0, "y": 240.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphEdge",
+            "comment": "A QGraphicsObject drawing a directed arrow from a source GraphNode to a target GraphNode, clipped to each node's border. Registers itself with both endpoints and recomputes its geometry whenever an endpoint moves. Carries an optional label.",
+            "implemented": true,
+            "position": { "x": 60.0, "y": 240.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphScene",
+            "comment": "A QGraphicsScene that owns nodes and edges and drives editing via an EditMode state machine (add class/module/function, add edge, delete, select). Provides safe deletion helpers (edges before nodes) and graph-wide dependency queries (nodes, readyToImplement, blocked).",
+            "implemented": true,
+            "position": { "x": 280.0, "y": 240.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphView",
+            "comment": "A QGraphicsView providing zoom (wheel), space-drag panning, and a dotted background grid. Purely a viewport concern; holds no domain state.",
+            "implemented": true,
+            "position": { "x": 500.0, "y": 240.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphSerializer",
+            "comment": "Saves and loads a GraphScene to/from JSON. Nodes serialize kind, name, comment, implemented, and position; edges reference nodes by index with an optional comment. Loading is tolerant: a missing `implemented` flag defaults to false. Report failures via lastError().",
+            "implemented": true,
+            "position": { "x": 700.0, "y": 240.0 }
+        },
+        {
+            "kind": "Class",
+            "name": "MainWindow",
+            "comment": "The QMainWindow shell: builds the toolbar and menus, hosts a GraphView over a GraphScene, and wires save/load (via GraphSerializer), PNG export, zoom, and fit-to-view actions. Reflects the current EditMode in a status label.",
+            "implemented": true,
+            "position": { "x": 900.0, "y": 240.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::borderPoint",
+            "comment": "Given a scene point, return the intersection of the ray from this node's center toward that point with the node's rectangular silhouette. Used by GraphEdge to clip arrow endpoints to the node border.",
+            "implemented": true,
+            "position": { "x": -240.0, "y": 480.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::dependencyStatus",
+            "comment": "Return NoDependencies if the node has no outgoing edges, Blocked if any dependency's isImplemented() is false, otherwise Ready. This is the core signal that lets an agent decide whether to implement against real code or stub a dependency with a NotImplementedError.",
+            "implemented": true,
+            "position": { "x": -60.0, "y": 480.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphEdge::recomputeGeometry",
+            "comment": "Recompute the clipped line between the two node borders and the filled arrowhead triangle at the target end, then update the cached bounding rect. Called on construction and whenever an endpoint moves. Guard against null endpoints.",
+            "implemented": true,
+            "position": { "x": 120.0, "y": 480.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphScene::readyToImplement",
+            "comment": "Return the unimplemented nodes whose every dependency is already implemented (leaf nodes included). These are the nodes safe to implement next without stubbing anything. Pair with blocked() for the complementary set.",
+            "implemented": true,
+            "position": { "x": 300.0, "y": 480.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphSerializer::saveToFile",
+            "comment": "Collect nodes and edges in a stable order, write nodes with their fields and edges as origin/destination indices into the node list, and dump the JSON document to filePath. Fail with lastError() if an edge references a node not in the scene or the file cannot be opened.",
+            "implemented": true,
+            "position": { "x": 620.0, "y": 480.0 }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphSerializer::loadFromFile",
+            "comment": "Parse the JSON file, clear the scene, then rebuild nodes (restoring kind, name, comment, implemented, position) and edges by index. Validate node kinds and edge index ranges, reporting any problem via lastError().",
+            "implemented": true,
+            "position": { "x": 800.0, "y": 480.0 }
+        }
+    ],
+    "edges": [
+        { "origin": 1, "destination": 0, "comment": "depends on" },
+        { "origin": 2, "destination": 0, "comment": "depends on" },
+        { "origin": 2, "destination": 1, "comment": "depends on" },
+
+        { "origin": 0, "destination": 3, "comment": "contains" },
+        { "origin": 0, "destination": 4, "comment": "contains" },
+        { "origin": 0, "destination": 5, "comment": "contains" },
+        { "origin": 0, "destination": 6, "comment": "contains" },
+        { "origin": 1, "destination": 7, "comment": "contains" },
+        { "origin": 2, "destination": 8, "comment": "contains" },
+
+        { "origin": 4, "destination": 3, "comment": "uses" },
+        { "origin": 3, "destination": 4, "comment": "uses" },
+        { "origin": 5, "destination": 3, "comment": "uses" },
+        { "origin": 5, "destination": 4, "comment": "uses" },
+        { "origin": 7, "destination": 5, "comment": "uses" },
+        { "origin": 7, "destination": 3, "comment": "uses" },
+        { "origin": 7, "destination": 4, "comment": "uses" },
+        { "origin": 8, "destination": 5, "comment": "uses" },
+        { "origin": 8, "destination": 6, "comment": "uses" },
+        { "origin": 8, "destination": 7, "comment": "uses" },
+
+        { "origin": 3, "destination": 9, "comment": "provides" },
+        { "origin": 3, "destination": 10, "comment": "provides" },
+        { "origin": 4, "destination": 11, "comment": "provides" },
+        { "origin": 5, "destination": 12, "comment": "provides" },
+        { "origin": 7, "destination": 13, "comment": "provides" },
+        { "origin": 7, "destination": 14, "comment": "provides" }
+    ]
+}
