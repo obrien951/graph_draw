@@ -1,0 +1,140 @@
+{
+    "_comment": "Scope policy for building graphs/graph_draw.planned.json (Part B of IMPLEMENTATION_PLAN.md). Every node's agent is fenced to the paths listed here; anything else it edits is reverted after it exits.",
+    "defaults": {
+        "allow": [
+            "{module_dir}/**"
+        ],
+        "max_files": 8,
+        "max_added_lines": 900
+    },
+    "shared_allow": [
+        "CMakeLists.txt",
+        "tests/CMakeLists.txt",
+        "tests/scene_helpers.h"
+    ],
+    "protected": [
+        "tests/test_repoanalyzer.cpp",
+        "tests/test_graphscene.cpp",
+        "tests/test_graphserializer.cpp",
+        "tests/test_dependencies.cpp",
+        "tests/qt_app_fixture.cpp",
+        "graphs/**",
+        "memory/**",
+        "IMPLEMENTATION_PLAN.md",
+        ".gitignore"
+    ],
+    "ignore": [
+        ".git/**",
+        "build/**",
+        "cmake-build-*/**",
+        "**/CMakeFiles/**",
+        ".idea/**",
+        ".qt/**",
+        "**/*.o",
+        "**/*.a",
+        "**/*.so",
+        "**/*.dylib",
+        "**/.DS_Store",
+        "**/Makefile",
+        "**/cmake_install.cmake",
+        "**/CTestTestfile.cmake",
+        "**/compile_commands.json",
+        ".harness/**",
+        "**/__pycache__/**",
+        "**/progress.marks"
+    ],
+    "modules": {
+        "graph_lang": {
+            "dir": "graph_lang",
+            "note": "Links Qt Core ONLY. Never include or link graph_core from here \u2014 that constraint is the whole point of the module.",
+            "shared_allow": [
+                "CMakeLists.txt",
+                "tests/CMakeLists.txt",
+                "tests/scene_helpers.h",
+                "tests/test_sourcetext.cpp",
+                "tests/test_repofileindex.cpp",
+                "tests/test_labelresolver.cpp"
+            ]
+        },
+        "graph_lang_cpp": {
+            "dir": "graph_lang_cpp",
+            "shared_allow": [
+                "CMakeLists.txt",
+                "tests/CMakeLists.txt",
+                "tests/scene_helpers.h",
+                "tests/test_cppanalyzer.cpp"
+            ]
+        },
+        "graph_lang_rust": {
+            "dir": "graph_lang_rust",
+            "shared_allow": [
+                "CMakeLists.txt",
+                "tests/CMakeLists.txt",
+                "tests/scene_helpers.h",
+                "tests/test_cargotoml.cpp",
+                "tests/test_rustlexer.cpp",
+                "tests/test_rustsyntax.cpp",
+                "tests/test_rustanalyzer.cpp"
+            ]
+        },
+        "graph_merge": {
+            "dir": "graph_merge",
+            "shared_allow": [
+                "CMakeLists.txt",
+                "tests/CMakeLists.txt",
+                "tests/scene_helpers.h",
+                "tests/test_graphmerger.cpp"
+            ]
+        },
+        "graph_analyze": {
+            "dir": "graph_analyze",
+            "note": "repoanalyzer.h keeps its path and class name so analyze/main.cpp and tests/test_repoanalyzer.cpp need no edits.",
+            "shared_allow": [
+                "CMakeLists.txt",
+                "tests/CMakeLists.txt",
+                "tests/scene_helpers.h",
+                "tests/test_graphbuilder.cpp"
+            ]
+        },
+        "graph_core": {
+            "dir": "graph_core"
+        },
+        "graph_io": {
+            "dir": "graph_io"
+        },
+        "app": {
+            "dir": "app"
+        },
+        "repo_to_graph": {
+            "dir": "analyze"
+        },
+        "graph_draw_tests": {
+            "dir": "tests"
+        }
+    },
+    "nodes": {
+        "graph_draw_tests": {
+            "allow": [
+                "tests/**"
+            ],
+            "max_files": 14,
+            "note": "test_repoanalyzer.cpp is the regression contract for the whole refactor and must pass unedited."
+        },
+        "repo_to_graph": {
+            "allow": [
+                "analyze/**",
+                "CMakeLists.txt"
+            ],
+            "note": "Default output path stays <root>/graphs/<name>.generated.json so a curated graph can never be clobbered."
+        }
+    },
+    "context_files": [
+        "graph_analyze/repoanalyzer.h",
+        "graph_analyze/repoanalyzer.cpp",
+        "graph_core/graphnode.h",
+        "graph_core/graphscene.h",
+        "graphs/README.md",
+        "CMakeLists.txt"
+    ],
+    "verify": []
+}

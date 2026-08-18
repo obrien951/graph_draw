@@ -1,0 +1,312 @@
+"""Command line: pick a graph, a backend, an agent and a model, and walk."""
+from __future__ import annotations
+
+import argparse
+import sys
+import textwrap
+from pathlib import Path
+from typing import Sequence
+
+from .backends import BACKENDS, DEFAULT_SERVER_URL, DRY_RUN, OPENCODE, AgentSpec, build_backend
+from .context import Budget, RepoContext
+from .graphmodel import LEAF_FIRST, ORDERS, ROOT_FIRST, Graph, GraphError
+from .prompts import PromptBuilder
+from .review import Reviewer
+from .runner import VIOLATION_POLICIES, Harness, HarnessOptions, ON_VIOLATION_RETRY
+from .scope import ScopeConfig, ScopeResolver
+from .state import DONE, RunState
+from .stubs import StubIndex
+from .verify import Verifier
+from .workspace import GitWorkspace, WorkspaceError
+
+DESCRIPTION = """\
+Walk a graph_io dependency graph and deploy one coding agent per node.
+
+The walk is foot-to-leaf by default: a node is implemented before the things it
+calls exist, so each agent declares what it needs from its dependencies and
+leaves the bodies unfilled with a HARNESS-STUB(<node>) marker. When the walk
+reaches that dependency, its agent is handed every call site waiting on it.
+"""
+
+EPILOG = """\
+examples:
+  # see the plan without launching anything
+  graph_agent.py --graph graphs/graph_draw.planned.json --backend dry-run --plan-only
+
+  # build this repo's Part B with opencode against a local llama-swap model
+  graph_agent.py --graph graphs/graph_draw.planned.json \\
+      --backend opencode --model felnor/qwen3-coder-30b --agent build \\
+      --scope-config harness.scope.json --plan-file IMPLEMENTATION_PLAN.md \\
+      --verify-cmd "cmake --build build" --verify-cmd "ctest --test-dir build"
+
+  # one node, reviewed by a second model on llama-server
+  graph_agent.py --graph graphs/graph_draw.planned.json --only TomlDocument \\
+      --backend opencode --model felnor/kat-coder-v2.5-q6 \\
+      --review-backend llama-server --review-model qwen3-coder-30b \\
+      --review-server-url http://felnor:8080/v1
+
+  # no agent CLI at all: a local .gguf answers with file blocks
+  graph_agent.py --graph graphs/graph_draw.planned.json --backend llama-cli \\
+      --gguf ~/models/Qwen3.8-9B-Q8_0.gguf --only "sourcetext::blankC"
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="graph_agent.py", description=DESCRIPTION, epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    g = p.add_argument_group("graph and repository")
+    g.add_argument("--graph", required=True, help="graph_io JSON file to build from")
+    g.add_argument("--repo", default=".", help="repository root the agents work in (default: .)")
+    g.add_argument("--order", choices=ORDERS, default=ROOT_FIRST,
+                   help=f"{ROOT_FIRST}: callers first, stub what they call (default). "
+                        f"{LEAF_FIRST}: dependencies first.")
+    g.add_argument("--scope-config", help="JSON scope/fence policy (see harness.scope.json)")
+    g.add_argument("--plan-file", help="markdown plan; the task id in a node's comment is "
+                                       "extracted from it into the prompt")
+
+    s = p.add_argument_group("selection")
+    s.add_argument("--only", action="append", default=[], metavar="NAME",
+                   help="build just this node (repeatable); implies --force")
+    s.add_argument("--skip", action="append", default=[], metavar="NAME", help="never build this node")
+    s.add_argument("--kind", action="append", default=[], choices=["Module", "Class", "Function"],
+                   help="restrict to these node kinds")
+    s.add_argument("--force", action="append", default=[], metavar="NAME",
+                   help="build a node even though the graph marks it implemented")
+    s.add_argument("--include-implemented", action="store_true",
+                   help="build every node, implemented or not")
+    s.add_argument("--max-nodes", type=int, default=0, help="stop after N nodes (0 = no limit)")
+
+    a = p.add_argument_group("agent")
+    a.add_argument("--backend", choices=BACKENDS, default=OPENCODE)
+    a.add_argument("--model", help="model name, e.g. felnor/qwen3-coder-30b for opencode")
+    a.add_argument("--agent", help="agent name passed to the backend (opencode --agent)")
+    a.add_argument("--agent-binary", help="path to the backend binary")
+    a.add_argument("--variant", help="opencode --variant (reasoning effort)")
+    a.add_argument("--server-url", default=DEFAULT_SERVER_URL,
+                   help=f"OpenAI-compatible endpoint for llama-server (default {DEFAULT_SERVER_URL})")
+    a.add_argument("--api-key", help="bearer token for the endpoint, if it wants one")
+    a.add_argument("--gguf", help="model file for --backend llama-cli")
+    a.add_argument("--ctx-size", type=int, default=32768)
+    a.add_argument("--max-tokens", type=int, default=8192)
+    a.add_argument("--temperature", type=float, default=0.2)
+    a.add_argument("--agent-timeout", type=int, default=3600, help="seconds per agent run")
+    a.add_argument("--agent-arg", action="append", default=[],
+                   help="extra argument passed through to the backend (repeatable)")
+
+    r = p.add_argument_group("review pass (DRY / SOLID / scope)")
+    r.add_argument("--review-backend", choices=BACKENDS, help="enable the review pass")
+    r.add_argument("--review-model")
+    r.add_argument("--review-agent")
+    r.add_argument("--review-server-url")
+    r.add_argument("--review-gguf")
+    r.add_argument("--no-review", action="store_true", help="disable review even if configured")
+
+    c = p.add_argument_group("context")
+    c.add_argument("--context-file", action="append", default=[], metavar="PATH",
+                   help="always include this file in the prompt (repeatable)")
+    c.add_argument("--context-glob", action="append", default=[], metavar="GLOB",
+                   help="always include files matching this glob (repeatable)")
+    c.add_argument("--context-chars", type=int, default=90_000, help="context budget per prompt")
+    c.add_argument("--inline-limit", type=int, default=60_000,
+                   help="briefs longer than this spill their context to a file the agent reads")
+
+    v = p.add_argument_group("verification and safety")
+    v.add_argument("--verify-cmd", action="append", default=[], metavar="CMD",
+                   help="shell command that must pass after each node (repeatable)")
+    v.add_argument("--verify-timeout", type=int, default=1800)
+    v.add_argument("--attempts", type=int, default=2, help="attempts per node (default 2)")
+    v.add_argument("--on-violation", choices=VIOLATION_POLICIES, default=ON_VIOLATION_RETRY,
+                   help="what to do when the agent edits outside its scope")
+    v.add_argument("--no-scope-guard", action="store_true",
+                   help="do not snapshot or revert (no git required, no fence enforcement)")
+    v.add_argument("--stop-on-failure", action="store_true")
+    v.add_argument("--commit", action="store_true", help="git commit after each successful node")
+    v.add_argument("--commit-template", default="harness: implement {kind} {name}")
+    v.add_argument("--no-update-graph", action="store_true",
+                   help="do not flip implemented=true in the graph file")
+
+    o = p.add_argument_group("run control")
+    o.add_argument("--state-dir", default=".harness", help="logs, briefs, backups and run state")
+    o.add_argument("--resume", action="store_true", help="skip nodes already marked done in state")
+    o.add_argument("--reset", action="store_true", help="discard previous run state")
+    o.add_argument("--plan-only", action="store_true", help="print the walk order and exit")
+    o.add_argument("--pause", action="store_true", help="confirm before each node")
+    return p
+
+
+
+def _wrap(label: str, items, width: int = 96) -> str:
+    body = ", ".join(items)
+    indent = " " * 14
+    return textwrap.fill(body, width=width, initial_indent=f"       {label}: ",
+                         subsequent_indent=indent)
+
+
+def _selected(graph: Graph, args, order: Sequence[int], state: RunState) -> list[int]:
+    only = {n.lower() for n in args.only}
+    skip = {n.lower() for n in args.skip}
+    force = {n.lower() for n in args.force} | only
+    kinds = set(args.kind)
+    chosen: list[int] = []
+    for i in order:
+        node = graph.node(i)
+        low = node.name.lower()
+        if only and low not in only:
+            continue
+        if low in skip:
+            continue
+        if kinds and node.kind not in kinds:
+            continue
+        if node.implemented and not (args.include_implemented or low in force):
+            continue
+        if args.resume and state.status_of(node.name) == DONE:
+            continue
+        chosen.append(i)
+    if args.max_nodes:
+        chosen = chosen[: args.max_nodes]
+    return chosen
+
+
+def _agent_spec(args) -> AgentSpec:
+    return AgentSpec(
+        backend=args.backend, model=args.model, agent=args.agent, binary=args.agent_binary,
+        server_url=args.server_url, api_key=args.api_key, gguf=args.gguf,
+        ctx_size=args.ctx_size, max_tokens=args.max_tokens, temperature=args.temperature,
+        timeout=args.agent_timeout, variant=args.variant, extra_args=tuple(args.agent_arg),
+    )
+
+
+def _review_spec(args) -> AgentSpec | None:
+    if args.no_review or not args.review_backend:
+        return None
+    return AgentSpec(
+        backend=args.review_backend,
+        model=args.review_model or args.model,
+        agent=args.review_agent,
+        binary=args.agent_binary,
+        server_url=args.review_server_url or args.server_url,
+        api_key=args.api_key,
+        gguf=args.review_gguf or args.gguf,
+        ctx_size=args.ctx_size, max_tokens=args.max_tokens,
+        temperature=args.temperature, timeout=args.agent_timeout,
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    root = Path(args.repo).resolve()
+
+    try:
+        graph = Graph.load(args.graph)
+    except GraphError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    config = ScopeConfig.load(args.scope_config) if args.scope_config else ScopeConfig()
+    verify_cmds = args.verify_cmd or list(config.verify)
+    context_files = list(dict.fromkeys(list(config.context_files) + args.context_file))
+
+    state_dir = (root / args.state_dir) if not Path(args.state_dir).is_absolute() else Path(args.state_dir)
+    state_path = state_dir / "state.json"
+    if args.reset and state_path.exists():
+        state_path.unlink()
+    state = RunState.load(state_path)
+
+    order, cyclic = graph.order(args.order)
+    selection = _selected(graph, args, order, state)
+
+    print(f"graph : {args.graph} — {graph.summary()}")
+    print(f"repo  : {root}")
+    print(f"order : {args.order} ({len(selection)} node(s) selected)")
+    if cyclic:
+        print(f"warning: {len(cyclic)} node(s) sit in a dependency cycle and were appended last: "
+              f"{', '.join(graph.node(i).name for i in cyclic)}")
+
+    context = RepoContext(root, ignore=config.ignore, budget=Budget(total_chars=args.context_chars))
+    if args.context_glob:
+        context_files += context.matching(args.context_glob)
+
+    if args.plan_only or args.backend == DRY_RUN:
+        for position, i in enumerate(selection, 1):
+            node = graph.node(i)
+            scope = ScopeResolver(graph, config).resolve(node)
+            todo = [d.name for d in graph.unimplemented_dependencies(i)]
+            print(f"{position:3d}. {node.kind:8s} {node.name}")
+            print(_wrap("scope", scope.allow or ["(none)"]))
+            print(_wrap("stubs", todo or ["(none)"]))
+        if args.plan_only:
+            return 0
+
+    try:
+        backend = build_backend(_agent_spec(args), root)
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    review_spec = _review_spec(args)
+    review_backend = build_backend(review_spec, root) if review_spec else None
+
+    workspace = None
+    if not args.no_scope_guard:
+        try:
+            workspace = GitWorkspace(root, ignore=config.ignore)
+        except WorkspaceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+    prompts = PromptBuilder(graph)
+    harness = Harness(
+        graph=graph, root=root, backend=backend,
+        scopes=ScopeResolver(graph, config), context=context, prompts=prompts,
+        workspace=workspace,
+        verifier=Verifier(verify_cmds, root, timeout=args.verify_timeout),
+        reviewer=Reviewer(review_backend, prompts, root),
+        state=state, state_dir=state_dir,
+        options=HarnessOptions(
+            order=args.order, attempts=max(1, args.attempts), on_violation=args.on_violation,
+            inline_limit=args.inline_limit, update_graph=not args.no_update_graph,
+            commit=args.commit, commit_template=args.commit_template, pause=args.pause,
+            plan_path=args.plan_file, extra_context=tuple(context_files),
+            stop_on_failure=args.stop_on_failure,
+        ),
+    )
+    state.meta = {"graph": str(args.graph), "order": args.order,
+                  "agent": backend.describe(),
+                  "review": review_backend.describe() if review_backend else None}
+    state.save()
+
+    print(f"agent : {backend.describe()}")
+    if review_backend:
+        print(f"review: {review_backend.describe()}")
+    if not selection:
+        print("nothing to do")
+        return 0
+
+    try:
+        outcomes = harness.run(selection)
+    except KeyboardInterrupt:
+        print("\ninterrupted; state saved — rerun with --resume")
+        return 130
+
+    return _report(harness, outcomes, state_dir, config)
+
+
+def _report(harness: Harness, outcomes, state_dir: Path, config: ScopeConfig) -> int:
+    print("\n--- summary ---")
+    failed = 0
+    for o in outcomes:
+        mark = {"done": "ok  ", "failed": "FAIL", "skipped": "skip"}.get(o.status, o.status)
+        detail = f" — {o.note}" if o.note else ""
+        print(f"{mark} {o.node.kind:8s} {o.node.name} ({len(o.changed)} files, {o.seconds:.0f}s){detail}")
+        failed += o.status == "failed"
+    outstanding = StubIndex(harness.root, ignore=config.ignore).outstanding()
+    if outstanding:
+        print("\nunfilled calls still open:")
+        for name, sites in sorted(outstanding.items()):
+            where = ", ".join(f"{s.path}:{s.line}" for s in sites[:4])
+            print(f"  {name} — {len(sites)} site(s): {where}")
+    print(f"\nstate, briefs and logs: {state_dir}")
+    return 1 if failed else 0
