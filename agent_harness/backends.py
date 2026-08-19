@@ -253,7 +253,7 @@ class LlamaCliBackend(TextBackend):
             self.binary, "-m", self.gguf, "-f", str(prompt_file),
             "-c", str(self.spec.ctx_size), "-n", str(self.spec.max_tokens),
             "--temp", str(self.spec.temperature),
-            "-no-cnv", "-st", "--simple-io", "-no-display-prompt", "--no-warmup",
+            "--no-conversation", "-st", "--simple-io", "--no-display-prompt", "--no-warmup",
         ]
         if request.system:
             argv += ["-sys", request.system]
