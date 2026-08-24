@@ -73,6 +73,25 @@ class ScriptedBackend(Backend):
         return RunResult(True, text=f"wrote {', '.join(writes)}")
 
 
+class ReviewBackend(Backend):
+    """Stands in for a review model: replies from a script, writes nothing."""
+
+    agentic = True
+
+    def __init__(self, replies, ok=True):
+        super().__init__(AgentSpec(backend="review-double"))
+        self.replies = list(replies)
+        self.ok = ok
+        self.calls = 0
+
+    def run(self, request: RunRequest) -> RunResult:
+        self.calls += 1
+        if not self.ok:
+            return RunResult(False, error="reviewer unreachable")
+        reply = self.replies.pop(0) if self.replies else "VERDICT: PASS"
+        return RunResult(True, text=reply)
+
+
 class GraphOrderTests(unittest.TestCase):
     def setUp(self):
         self.graph = Graph.load(REPO_ROOT / "graphs" / "graph_draw.planned.json")
@@ -264,6 +283,100 @@ class HarnessEndToEndTests(unittest.TestCase):
         outcome = harness.run_node(graph.find("Widget"))
         self.assertEqual(outcome.status, FAILED)
         self.assertFalse(graph.find("Widget").implemented)
+
+    def test_a_failed_node_leaves_nothing_behind(self):
+        """A node that never passes must not leave half-written files on disk.
+
+        The 2026-08-19 run left the output of four failed nodes in the tree,
+        which is where the duplicate graph_lang_rust/src/ tree came from.
+        """
+        harness, _, graph = self._harness([{"core/widget.cpp": "a\n"},
+                                           {"core/widget.cpp": "b\n"}])
+        harness.verifier = Verifier(["test -f core/never_created.cpp"], self.root)
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, FAILED)
+        self.assertFalse((self.root / "core" / "widget.cpp").exists())
+        self.assertFalse(graph.find("Widget").implemented)
+
+    def test_failed_node_files_are_kept_when_revert_is_off(self):
+        harness, _, graph = self._harness([{"core/widget.cpp": "a\n"},
+                                           {"core/widget.cpp": "b\n"}],
+                                          revert_on_failure=False)
+        harness.verifier = Verifier(["test -f core/never_created.cpp"], self.root)
+        self.assertEqual(harness.run_node(graph.find("Widget")).status, FAILED)
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(), "b\n")
+
+    def test_a_pre_existing_file_survives_a_failed_node(self):
+        """Rewinding restores prior content; it does not blank the file."""
+        harness, _, graph = self._harness([{"core/existing.h": "#pragma once\n// vandalised\n"}])
+        harness.verifier = Verifier(["false"], self.root)
+        self.assertEqual(harness.run_node(graph.find("Widget")).status, FAILED)
+        self.assertEqual((self.root / "core" / "existing.h").read_text(), "#pragma once\n")
+
+    def test_strong_model_is_chosen_only_for_the_nominated_nodes(self):
+        harness, backend, graph = self._harness([{"core/widget.cpp": "x\n"}])
+        strong = ScriptedBackend(self.root, [])
+        harness.strong_backend = strong
+        harness.strong_kinds = frozenset({"Module"})
+        self.assertIs(harness._backend_for(graph.find("Widget")), backend)
+        self.assertIs(harness._backend_for(graph.find("core")), strong)
+
+    # ---------------------------------------------------------------- gate
+    def _reviewed(self, script, replies, ok=True, **opts):
+        harness, backend, graph = self._harness(script, **opts)
+        judge = ReviewBackend(replies, ok=ok)
+        harness.reviewer = Reviewer(judge, PromptBuilder(graph), self.root)
+        return harness, backend, graph, judge
+
+    def test_review_agent_is_dispatched_for_every_node_that_builds(self):
+        """The traversal dispatches the reviewer itself; it is not optional."""
+        harness, _, graph, judge = self._reviewed([{"core/widget.cpp": "x\n"}],
+                                                  ["VERDICT: PASS"])
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(judge.calls, 1)
+        self.assertTrue(outcome.reviewed)
+
+    def test_review_rejection_fails_the_node_and_feeds_back_the_findings(self):
+        harness, backend, graph, judge = self._reviewed(
+            [{"core/widget.cpp": "x\n"}, {"core/widget.cpp": "y\n"}],
+            ["VERDICT: REVISE\n- widget duplicates existing.h", "VERDICT: PASS"])
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 2)
+        self.assertEqual(judge.calls, 2)
+        self.assertIn("duplicates existing.h", backend.prompts[1])
+
+    def test_the_build_gate_runs_before_the_reviewer_and_short_circuits_it(self):
+        """No point paying a review model to read a diff that does not compile."""
+        harness, _, graph, judge = self._reviewed([{"core/widget.cpp": "x\n"}], ["VERDICT: PASS"])
+        harness.verifier = Verifier(["test -f core/never_created.cpp"], self.root)
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, FAILED)
+        self.assertEqual(judge.calls, 0)
+        self.assertTrue(outcome.note.startswith("verify failed"), outcome.note)
+
+    def test_an_unreachable_reviewer_passes_the_node_by_default(self):
+        """review.py fails open, so an advisory reviewer never blocks the walk."""
+        harness, _, graph, _ = self._reviewed([{"core/widget.cpp": "x\n"}], [], ok=False)
+        self.assertEqual(harness.run_node(graph.find("Widget")).status, DONE)
+
+    def test_require_review_turns_an_unreachable_reviewer_into_a_failure(self):
+        """Under --require-review, silence from the reviewer is a refusal."""
+        harness, _, graph, _ = self._reviewed([{"core/widget.cpp": "x\n"},
+                                               {"core/widget.cpp": "y\n"}], [], ok=False,
+                                              require_review=True)
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, FAILED)
+        self.assertIn("reviewer did not run", outcome.note)
+        self.assertFalse(graph.find("Widget").implemented)
+
+    def test_a_broken_tree_stops_the_walk_before_any_node_runs(self):
+        harness, backend, graph = self._harness([{"core/widget.cpp": "x\n"}])
+        harness.verifier = Verifier(["test -f core/never_created.cpp"], self.root)
+        outcomes = harness.run([graph.find("Widget").index])
+        self.assertEqual(outcomes, [])
+        self.assertEqual(backend.prompts, [])
 
     def test_failing_verification_retries_with_the_output_as_feedback(self):
         harness, backend, graph = self._harness([{"core/widget.cpp": "a\n"},

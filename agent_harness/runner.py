@@ -19,6 +19,7 @@ from typing import Callable, Sequence
 
 from .backends import Backend, RunRequest
 from .context import RepoContext
+from .gate import Gate
 from .graphmodel import Graph, Node, ROOT_FIRST
 from .prompts import PromptBuilder
 from .review import Reviewer
@@ -54,6 +55,8 @@ class HarnessOptions:
     plan_path: str | None = None
     extra_context: tuple[str, ...] = ()
     stop_on_failure: bool = False
+    revert_on_failure: bool = True
+    require_review: bool = False
 
 
 @dataclass
@@ -65,6 +68,8 @@ class NodeOutcome:
     violations: list[Violation] = field(default_factory=list)
     note: str = ""
     seconds: float = 0.0
+    verified: bool = False
+    reviewed: bool = False
 
 
 class Harness:
@@ -85,6 +90,9 @@ class Harness:
         state_dir: Path,
         options: HarnessOptions,
         log: Callable[[str], None] = print,
+        strong_backend: Backend | None = None,
+        strong_nodes: Sequence[str] = (),
+        strong_kinds: Sequence[str] = (),
     ):
         self.graph = graph
         self.root = root
@@ -99,12 +107,28 @@ class Harness:
         self.state_dir = state_dir
         self.options = options
         self.log = log
+        self.strong_backend = strong_backend
+        self.strong_nodes = frozenset(strong_nodes)
+        self.strong_kinds = frozenset(strong_kinds)
         self.stubs = StubIndex(root, ignore=scopes.config.ignore)
+
+    def gate(self) -> Gate:
+        """The completion gate, rebuilt per call so late-swapped parts are honoured."""
+        return Gate(self.verifier, self.reviewer, self.options.require_review)
 
     # ------------------------------------------------------------------ walk
     def run(self, indices: Sequence[int]) -> list[NodeOutcome]:
         outcomes: list[NodeOutcome] = []
         total = len(indices)
+
+        # Verify once before touching anything. A tree that is already broken
+        # makes every node fail for reasons that are not the node's fault.
+        baseline = self.gate().baseline(self.state_dir / "logs" / "baseline.verify.log")
+        if not baseline.ok:
+            self.log(f"  {baseline.note}")
+            self.log("  refusing to start: fix the tree first, or drop the verify commands")
+            return outcomes
+
         for position, index in enumerate(indices, start=1):
             node = self.graph.node(index)
             self.log(f"\n[{position}/{total}] {node.kind} {node.name}")
@@ -130,12 +154,49 @@ class Harness:
         return answer in ("", "y", "yes")
 
     # ------------------------------------------------------------- one node
+    def _backend_for(self, node: Node) -> Backend:
+        """Structural nodes may warrant a stronger (slower, costlier) model.
+
+        The 2026-08-19 run showed a small model can write a plausible-looking
+        interface it cannot then implement, so the shared contracts are worth
+        paying more for while leaf functions stay cheap.
+        """
+        if self.strong_backend and (node.name in self.strong_nodes
+                                    or node.kind in self.strong_kinds):
+            return self.strong_backend
+        return self.backend
+
     def run_node(self, node: Node) -> NodeOutcome:
+        """Build one node, leaving the tree untouched if it does not succeed."""
         started = time.time()
         node_state = self.state.get(node.name, node.kind)
         node_state.status = RUNNING
         self.state.save()
 
+        # One snapshot for the whole node, not one per attempt: it is both the
+        # diff base and the point we rewind to if every attempt fails. Taking it
+        # per attempt would overwrite the backup we need to restore from.
+        entry = self._snapshot(node)
+        outcome = self._attempt_loop(node, entry, started)
+        if outcome.status == FAILED and self.options.revert_on_failure:
+            self._rewind(node, entry)
+        return outcome
+
+    def _rewind(self, node: Node, entry) -> None:
+        """Undo everything a failed node wrote.
+
+        Without this a failed node leaves half-written files behind that the
+        next node then sees, treats as real, and builds on.
+        """
+        if not (self.workspace and entry):
+            return
+        stray = sorted(self.workspace.changes(entry))
+        if not stray:
+            return
+        restored = self.workspace.restore(entry, stray)
+        self.log(f"  reverted {len(restored)} file(s) from the failed node")
+
+    def _attempt_loop(self, node: Node, entry, started: float) -> NodeOutcome:
         scope = self.scopes.resolve(node)
         feedback = ""
         last: NodeOutcome | None = None
@@ -147,16 +208,17 @@ class Harness:
             work_dir.mkdir(parents=True, exist_ok=True)
             log_path = self.state_dir / "logs" / f"{node.slug}.attempt{attempt}.log"
 
-            snapshot = self._snapshot(node)
+            snapshot = entry
             brief = self._brief(node, scope, feedback)
             prompt = self._deliver(brief, work_dir)
             (work_dir / f"brief.attempt{attempt}.md").write_text(brief.full(), encoding="utf-8")
 
             request = RunRequest(prompt=prompt, cwd=self.root,
                                  label=f"{node.kind} {node.name}", log_path=log_path)
-            request.prompt += self.backend.prompt_suffix(request)
-            result = self.backend.run(request)
-            if not self.backend.mutates:
+            request.prompt += self._backend_for(node).prompt_suffix(request)
+            agent = self._backend_for(node)
+            result = agent.run(request)
+            if not agent.mutates:
                 self.log(f"  brief written to {work_dir}/brief.attempt{attempt}.md "
                          f"({len(prompt)} chars); no agent launched")
                 return NodeOutcome(node, SKIPPED, attempt, note="dry run",
@@ -197,34 +259,27 @@ class Harness:
                             "Implement the node by editing files inside the allowed paths.")
                 continue
 
-            verdict = self.verifier.run(self.state_dir / "logs" / f"{node.slug}.verify.log") \
-                if self.verifier.enabled() else None
-            if verdict is not None and not verdict.ok:
-                self.log(f"  verify failed: {verdict.command}")
-                feedback = verdict.feedback()
-                last = NodeOutcome(node, FAILED, attempt, changed,
-                                   note=f"verify failed: {verdict.command}",
-                                   seconds=time.time() - started)
-                continue
-
-            review = self.reviewer.review(
+            # The gate: build/test commands, then the review agent, in that
+            # order, dispatched here by code rather than at an agent's option.
+            verdict = self.gate().check(
                 node, scope,
                 self.workspace.diff(snapshot) if self.workspace else "",
-                log_path=self.state_dir / "logs" / f"{node.slug}.review{attempt}.log",
-            ) if self.reviewer.enabled() else None
-            if review is not None and review.ran and not review.passed:
-                self.log(f"  review: REVISE ({len(review.findings)} finding(s))")
-                for f in review.findings[:6]:
-                    self.log(f"    - {f}")
-                feedback = review.feedback()
-                last = NodeOutcome(node, FAILED, attempt, changed,
-                                   note="review requested changes",
+                verify_log=self.state_dir / "logs" / f"{node.slug}.verify.log",
+                review_log=self.state_dir / "logs" / f"{node.slug}.review{attempt}.log",
+            )
+            if not verdict.ok:
+                self.log(f"  {verdict.stage}: {verdict.note}")
+                feedback = verdict.feedback()
+                last = NodeOutcome(node, FAILED, attempt, changed, note=verdict.note,
+                                   verified=verdict.verify_ran, reviewed=verdict.review_ran,
                                    seconds=time.time() - started)
                 continue
 
             self._finish(node, changed)
             self.log(f"  done: {len(changed)} file(s), +{added} lines")
-            return NodeOutcome(node, DONE, attempt, changed, seconds=time.time() - started)
+            return NodeOutcome(node, DONE, attempt, changed,
+                               verified=verdict.verify_ran, reviewed=verdict.review_ran,
+                               seconds=time.time() - started)
 
         return last or NodeOutcome(node, FAILED, self.options.attempts,
                                    note="no attempt succeeded", seconds=time.time() - started)
@@ -308,6 +363,8 @@ class Harness:
         ns.changed = sorted(outcome.changed)
         ns.violations = [str(v) for v in outcome.violations]
         ns.note = outcome.note
+        ns.verified = outcome.verified
+        ns.reviewed = outcome.reviewed
         ns.seconds = round(outcome.seconds, 1)
         ns.finished_at = time.strftime("%Y-%m-%d %H:%M:%S")
         self.state.save()

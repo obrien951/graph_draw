@@ -136,5 +136,10 @@
         "graphs/README.md",
         "CMakeLists.txt"
     ],
-    "verify": []
+    "verify": [
+        "cmake -S . -B build",
+        "cmake --build build -j4",
+        "cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure"
+    ],
+    "_verify_comment": "The build gate. Every node must leave the tree compiling and the existing tests passing before it is marked implemented. The 2026-08-19 run had no gate and marked 39 nodes done on a tree that did not link."
 }

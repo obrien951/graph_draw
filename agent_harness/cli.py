@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
@@ -103,6 +105,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--review-server-url")
     r.add_argument("--review-gguf")
     r.add_argument("--no-review", action="store_true", help="disable review even if configured")
+    r.add_argument("--require-review", action="store_true",
+                   help="a node may not be marked done unless a review agent actually read "
+                        "its diff and passed it. Makes an unreachable or unintelligible "
+                        "reviewer a failure instead of a silent pass")
 
     c = p.add_argument_group("context")
     c.add_argument("--context-file", action="append", default=[], metavar="PATH",
@@ -127,6 +133,32 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--commit-template", default="harness: implement {kind} {name}")
     v.add_argument("--no-update-graph", action="store_true",
                    help="do not flip implemented=true in the graph file")
+    v.add_argument("--no-revert-on-failure", action="store_true",
+                   help="leave a failed node's half-written files on disk (default: rewind "
+                        "them, so the next node never builds on broken code)")
+    v.add_argument("--allow-unverified-graph", action="store_true",
+                   help="permit flipping implemented=true with no --verify-cmd configured. "
+                        "Off by default: an unverified flag is a false completion claim")
+    v.add_argument("--freeze", action="append", default=[], metavar="GLOB",
+                   help="treat these paths as protected for this run. Use after a shared "
+                        "contract lands so later nodes consume it instead of reinventing it")
+
+    m = p.add_argument_group("model tiering")
+    m.add_argument("--strong-model", help="a second, more capable model for structural nodes")
+    m.add_argument("--strong-backend", choices=BACKENDS, help="backend for --strong-model")
+    m.add_argument("--strong-gguf", help="model file when --strong-backend is llama-cli")
+    m.add_argument("--strong-node", action="append", default=[], metavar="NAME",
+                   help="build this node with --strong-model (repeatable)")
+    m.add_argument("--strong-kind", action="append", default=[], metavar="KIND",
+                   choices=["Module", "Class", "Function"],
+                   help="build every node of this kind with --strong-model (repeatable)")
+
+    t = p.add_argument_group("non-code steps")
+    t.add_argument("--pre-cmd", action="append", default=[], metavar="CMD",
+                   help="shell command to run before the walk (repeatable). For work the "
+                        "graph cannot express: committing a baseline, wiring the build")
+    t.add_argument("--post-cmd", action="append", default=[], metavar="CMD",
+                   help="shell command to run after the walk (repeatable)")
 
     o = p.add_argument_group("run control")
     o.add_argument("--state-dir", default=".harness", help="logs, briefs, backups and run state")
@@ -179,6 +211,28 @@ def _agent_spec(args) -> AgentSpec:
     )
 
 
+def _strong_spec(args) -> AgentSpec | None:
+    """The alternate, more capable agent, if one was configured."""
+    if not (args.strong_model or args.strong_gguf):
+        return None
+    spec = _agent_spec(args)
+    return replace(spec,
+                   backend=args.strong_backend or spec.backend,
+                   model=args.strong_model or spec.model,
+                   gguf=args.strong_gguf or spec.gguf)
+
+
+def _run_steps(label: str, commands, cwd) -> int:
+    """Run the --pre-cmd / --post-cmd hooks, stopping at the first failure."""
+    for command in commands:
+        print(f"{label}: $ {command}")
+        code = subprocess.run(command, shell=True, cwd=str(cwd)).returncode
+        if code != 0:
+            print(f"error: {label} command failed ({code}): {command}", file=sys.stderr)
+            return code
+    return 0
+
+
 def _review_spec(args) -> AgentSpec | None:
     if args.no_review or not args.review_backend:
         return None
@@ -207,6 +261,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     config = ScopeConfig.load(args.scope_config) if args.scope_config else ScopeConfig()
     verify_cmds = args.verify_cmd or list(config.verify)
+    if args.freeze:
+        # A frozen path is just a protected one, decided at run time rather than
+        # in the config, so a contract can be locked the moment it lands.
+        config = replace(config, deny=tuple(config.deny) + tuple(args.freeze))
+
+    update_graph = not args.no_update_graph
+    previewing = args.plan_only or args.backend == DRY_RUN
+    if update_graph and not verify_cmds and not args.allow_unverified_graph and not previewing:
+        print("error: refusing to write implemented=true with nothing verifying it.\n"
+              "       The 2026-08-19 run marked 39 nodes done without ever compiling; the\n"
+              "       flags were false and the tree did not build.\n"
+              "       Give it a gate, e.g.:\n"
+              "         --verify-cmd 'cmake --build build -j4'\n"
+              "         --verify-cmd 'cd build && QT_QPA_PLATFORM=offscreen ctest'\n"
+              "       or pass --no-update-graph, or override with --allow-unverified-graph.",
+              file=sys.stderr)
+        return 2
     context_files = list(dict.fromkeys(list(config.context_files) + args.context_file))
 
     state_dir = (root / args.state_dir) if not Path(args.state_dir).is_absolute() else Path(args.state_dir)
@@ -246,6 +317,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    strong_spec = _strong_spec(args)
+    try:
+        strong_backend = build_backend(strong_spec, root) if strong_spec else None
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"error: --strong-model: {exc}", file=sys.stderr)
+        return 2
+
     review_spec = _review_spec(args)
     review_backend = build_backend(review_spec, root) if review_spec else None
 
@@ -267,15 +345,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         state=state, state_dir=state_dir,
         options=HarnessOptions(
             order=args.order, attempts=max(1, args.attempts), on_violation=args.on_violation,
-            inline_limit=args.inline_limit, update_graph=not args.no_update_graph,
+            inline_limit=args.inline_limit, update_graph=update_graph,
             commit=args.commit, commit_template=args.commit_template, pause=args.pause,
             plan_path=args.plan_file, extra_context=tuple(context_files),
             stop_on_failure=args.stop_on_failure,
+            revert_on_failure=not args.no_revert_on_failure,
+            require_review=args.require_review,
         ),
+        strong_backend=strong_backend,
+        strong_nodes=tuple(args.strong_node),
+        strong_kinds=tuple(args.strong_kind),
     )
     state.meta = {"graph": str(args.graph), "order": args.order,
                   "agent": backend.describe(),
-                  "review": review_backend.describe() if review_backend else None}
+                  "strong_agent": strong_backend.describe() if strong_backend else None,
+                  "review": review_backend.describe() if review_backend else None,
+                  "review_required": bool(args.require_review),
+                  "verify": list(verify_cmds)}
     state.save()
 
     print(f"agent : {backend.describe()}")
@@ -285,22 +371,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("nothing to do")
         return 0
 
+    if strong_backend:
+        print(f"strong: {strong_backend.describe()}")
+    print(f"verify: {'; '.join(verify_cmds) if verify_cmds else 'NONE (graph updates off)'}")
+    print(f"gate  : {harness.gate().describe()}")
+    broken_gate = harness.gate().misconfigured()
+    if broken_gate:
+        print(f"error: {broken_gate}", file=sys.stderr)
+        return 2
+
+    failed_step = _run_steps("pre", args.pre_cmd, root)
+    if failed_step:
+        return failed_step
+
     try:
         outcomes = harness.run(selection)
     except KeyboardInterrupt:
         print("\ninterrupted; state saved — rerun with --resume")
         return 130
 
-    return _report(harness, outcomes, state_dir, config)
+    code = _report(harness, outcomes, state_dir, config)
+    post = _run_steps("post", args.post_cmd, root)
+    return code or post
 
 
 def _report(harness: Harness, outcomes, state_dir: Path, config: ScopeConfig) -> int:
-    print("\n--- summary ---")
+    print("\n--- summary ---   [V]=build gate passed  [R]=reviewed by an agent")
     failed = 0
     for o in outcomes:
         mark = {"done": "ok  ", "failed": "FAIL", "skipped": "skip"}.get(o.status, o.status)
         detail = f" — {o.note}" if o.note else ""
-        print(f"{mark} {o.node.kind:8s} {o.node.name} ({len(o.changed)} files, {o.seconds:.0f}s){detail}")
+        # Show what actually vouched for a "done": an unbacked ok is the thing
+        # that made the 2026-08-19 state file untrustworthy.
+        gate = f"[{'V' if o.verified else '-'}{'R' if o.reviewed else '-'}]"
+        print(f"{mark} {gate} {o.node.kind:8s} {o.node.name} "
+              f"({len(o.changed)} files, {o.seconds:.0f}s){detail}")
         failed += o.status == "failed"
     outstanding = StubIndex(harness.root, ignore=config.ignore).outstanding()
     if outstanding:

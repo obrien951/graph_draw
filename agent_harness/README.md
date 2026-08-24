@@ -148,19 +148,136 @@ regression contract `tests/test_repoanalyzer.cpp`.
     --only "sourcetext::blankC" \
     --verify-cmd "cmake -S . -B build" --verify-cmd "cmake --build build -j"
 
-# 4. the whole of Part B, reviewed, committing as it goes
+# 4. the shared contract first, on the strong model, then freeze it
 ./graph_agent.py --graph graphs/graph_draw.planned.json \
     --scope-config harness.scope.json --plan-file IMPLEMENTATION_PLAN.md \
     --backend opencode --model felnor/kat-coder-v2.5-q6 --agent build \
+    --only "ir::Repo" --only "ir::Module" --only "ir::Type" --only "ir::Function" \
+    --only LanguageAnalyzer --only GraphBuilder --commit
+
+# 5. everything else, cheaper, consuming the frozen contract, reviewed
+./graph_agent.py --graph graphs/graph_draw.planned.json \
+    --scope-config harness.scope.json --plan-file IMPLEMENTATION_PLAN.md \
+    --backend opencode --model felnor/qwen3-coder-30b --agent build \
+    --strong-model felnor/kat-coder-v2.5-q6 --strong-kind Module \
+    --freeze 'graph_lang/**' \
     --review-backend llama-server --review-model qwen3-coder-30b \
     --review-server-url http://felnor:8080/v1 \
-    --verify-cmd "cmake --build build -j" --commit --resume
+    --commit --resume --stop-on-failure
 ```
+
+`--stop-on-failure` is worth having on the first real re-run: the previous run
+carried on through 43 nodes after the tree had already stopped compiling.
 
 Four nodes the graph marks `implemented: true` still carry Part B change
 instructions — `graph_analyze`, `repo_to_graph`, `graph_draw_tests` and
 `RepoAnalyzer`. They are skipped by default; pass them explicitly
 (`--force graph_analyze`) or use `--include-implemented`.
+
+## The gate
+
+`gate.py` is the one place that decides whether a node may be marked
+implemented. The traversal calls it; nothing else does; a model cannot opt out
+of it. That is the reason the harness is a Python program rather than a prompt.
+
+```
+      build/test commands  ->  review agent  ->  implemented = true
+              (Verifier)        (Reviewer)
+```
+
+Cheap and deterministic first, expensive and probabilistic second: a diff that
+does not compile is never sent to a review model. Both stages run **per node,
+per attempt**, inside the walk, and a refusal at either stage becomes the
+feedback for the next attempt.
+
+Before the first node, the gate also verifies the tree as it stands. A repo that
+is already broken makes every node fail for reasons that are not the node's
+fault, so the walk refuses to start instead.
+
+**The reviewer is dispatched by the harness, not requested by the agent.** When
+a `--review-backend` is configured, every node that builds gets its diff read by
+a second model, which answers `VERDICT: PASS` or `VERDICT: REVISE` with
+findings; findings are fed verbatim into the retry.
+
+`review.py` fails **open** in four places — no backend, empty diff, unreachable
+endpoint, unparseable reply — so an advisory reviewer can never stall a run.
+`--require-review` inverts that: silence becomes a refusal, and a node cannot be
+marked done unless a reviewer actually read its diff and passed it. Use it for
+unattended runs; leave it off when the review endpoint is flaky.
+
+The run summary marks what actually vouched for each node:
+
+```
+--- summary ---   [V]=build gate passed  [R]=reviewed by an agent
+ok   [VR] Class    TomlDocument (2 files, 41s)
+ok   [V-] Function rustlex::blank (1 files, 22s)
+FAIL [V-] Module   graph_lang_rust — review requested changes (3 finding(s))
+```
+
+`state.json` records the same two booleans per node, so a completion claim can
+be audited after the fact rather than taken on trust.
+
+## What the 2026-08-19 run taught us
+
+That run walked all 43 nodes, reported 39 done, and produced a tree that did not
+compile. Full analysis in `../PART_B_STATUS.md`. Five things changed here as a
+result; the first is the one that mattered.
+
+**1. A node is not done until the project builds.** The `Verifier` already
+existed and was already called inside the walk, but was given no commands, so a node was marked done whenever its agent
+exited without a scope violation. `harness.scope.json` now carries a `verify`
+block with configure/build/ctest, and the CLI **refuses to write
+`implemented: true` when nothing is verifying it**:
+
+```
+error: refusing to write implemented=true with nothing verifying it.
+```
+
+Override with `--allow-unverified-graph`, or turn flag-writing off with
+`--no-update-graph`. `--plan-only` and `--backend dry-run` are exempt, since
+they write nothing.
+
+**2. A failed node is rewound.** Previously a node that failed every attempt
+left its half-written files on disk, and the next node treated them as real.
+That is where the duplicate `graph_lang_rust/src/` tree came from. The runner
+now snapshots once per node and restores on terminal failure. `--no-revert-on-failure`
+restores the old behaviour when you want to inspect the wreckage.
+
+**3. Shared contracts can be frozen mid-run.** 43 agents independently invented
+`RepoFileIndex` — seven declarations, all incompatible — because each was fenced
+to its own module and none could see the others. Build the shared types first,
+then lock them:
+
+```bash
+./graph_agent.py ... --only ir::Repo --only LanguageAnalyzer   # build the contract
+./graph_agent.py ... --freeze 'graph_lang/**' --resume         # everyone else consumes it
+```
+
+`--freeze` adds paths to the protected list for that run, so a later agent that
+tries to redefine the contract has the edit reverted and is told why.
+
+**4. Structural nodes can use a bigger model.** A small model will write a
+plausible interface it cannot then implement. Tier it:
+
+```bash
+./graph_agent.py ... --model qwen3-coder-30b \
+    --strong-model kat-coder-v2.5-q6 --strong-kind Module --strong-node GraphBuilder
+```
+
+Leaf functions stay on the cheap model; modules and named structural nodes get
+the expensive one.
+
+**5. Work the graph cannot express needs its own step.** The graph's vocabulary
+is `Module`/`Class`/`Function`, so build wiring, CLI flags and documentation had
+no node and were simply never attempted. Use `--pre-cmd` / `--post-cmd`:
+
+```bash
+./graph_agent.py ... --pre-cmd 'git add -A && git commit -qm baseline' \
+                     --post-cmd 'cmake --build build -j4'
+```
+
+For agent-driven non-code work, the better fix is to give it a node — a CLI
+change belongs to a `Function main` node under the `repo_to_graph` module.
 
 ## Tests
 
@@ -185,7 +302,8 @@ exercised for real rather than mocked.
 | `stubs.py` | the `HARNESS-STUB(...)` protocol and its index |
 | `backends.py` | opencode, OpenAI-compatible, llama-cli, dry-run |
 | `patchformat.py` | file-block protocol for non-agentic models |
-| `verify.py` / `review.py` | the two quality gates |
+| `verify.py` / `review.py` | the two checks: build commands, and a second model on the diff |
+| `gate.py` | composes them into the one gate the traversal calls |
 | `state.py` / `runner.py` | resumable state, and the walk itself |
 | `cli.py` | argument parsing and wiring |
 

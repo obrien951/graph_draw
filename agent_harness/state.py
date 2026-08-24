@@ -20,6 +20,8 @@ class NodeState:
     note: str = ""
     seconds: float = 0.0
     finished_at: str = ""
+    verified: bool = False   # the build/test gate actually ran and passed
+    reviewed: bool = False   # a review agent actually read the diff
 
 
 class RunState:
