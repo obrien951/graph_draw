@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from . import indexer
 from .graphmodel import Graph, Node
 from .pathglob import matches_any
 
@@ -43,7 +44,9 @@ TASK_ID = re.compile(r"\b([ABC]\d{1,2})\b")
 class Budget:
     total_chars: int = 90_000
     tree_chars: int = 6_000
-    symbols_chars: int = 10_000
+    symbols_chars: int = 18_000     # ctags output carries line numbers + members,
+                                     # so it earns more of the budget than the old
+                                     # top-level-only regex scan did
     plan_chars: int = 14_000
     file_chars: int = 24_000        # per file
     max_files: int = 24             # split between related (priority) and the
@@ -111,10 +114,23 @@ class RepoContext:
         return Section("Repository layout (tracked source files)", body)
 
     def symbol_section(self) -> Section:
+        source_files = [f for f in self.files() if Path(f).suffix in SOURCE_SUFFIXES]
+        body = indexer.build_index(self.root, source_files)
+        title = "Existing symbols, with line numbers (via ctags)"
+        if body is None:
+            body = self._scan_symbols(source_files)
+            title = "Existing symbols"
+        if len(body) > self.budget.symbols_chars:
+            body = body[:self.budget.symbols_chars] + "\n... [symbol index truncated]"
+        return Section(f"{title} — REUSE these, do not reimplement them", body or "(none found)")
+
+    def _scan_symbols(self, source_files: Sequence[str]) -> str:
+        """Regex fallback used when ctags (specifically universal-ctags) isn't
+        on PATH. Coarser than the ctags path — top-level declarations only,
+        no line numbers, no members — but keeps the harness working without
+        that dependency installed."""
         lines: list[str] = []
-        for rel in self.files():
-            if Path(rel).suffix not in SOURCE_SUFFIXES:
-                continue
+        for rel in source_files:
             text = self.read(rel, limit=200_000)
             if not text:
                 continue
@@ -125,12 +141,7 @@ class RepoContext:
                         names.append(m.group(1))
             if names:
                 lines.append(f"{rel}: {', '.join(names[:24])}")
-        body = "\n".join(lines)
-        if len(body) > self.budget.symbols_chars:
-            body = body[:self.budget.symbols_chars] + "\n... [symbol index truncated]"
-        return Section(
-            "Existing symbols — REUSE these, do not reimplement them", body or "(none found)"
-        )
+        return "\n".join(lines)
 
     def files_section(self, paths: Sequence[str], title: str) -> Section | None:
         chunks: list[str] = []

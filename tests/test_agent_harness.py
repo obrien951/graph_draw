@@ -16,6 +16,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from unittest.mock import patch
+
+from agent_harness import indexer
 from agent_harness.backends import AgentSpec, Backend, RunRequest, RunResult
 from agent_harness.context import Budget, RepoContext
 from agent_harness.graphmodel import Graph, LEAF_FIRST, ROOT_FIRST
@@ -224,6 +227,114 @@ class ReviewParsingTests(unittest.TestCase):
 
     def test_unparseable_reply_does_not_block(self):
         self.assertEqual(parse_review("I could not read the diff"), (True, []))
+
+
+def _fake_ctags(tmp: Path, *, version_output: str, version_returncode: int = 0,
+                 run_stdout: str = "", run_returncode: int = 0) -> Path:
+    """An executable standing in for a ctags binary on PATH: prints
+    `version_output` for --version, `run_stdout` for any other invocation."""
+    script = tmp / "fake-ctags"
+    script.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"if '--version' in sys.argv:\n"
+        f"    sys.stdout.write({version_output!r})\n"
+        f"    sys.exit({version_returncode})\n"
+        f"sys.stdout.write({run_stdout!r})\n"
+        f"sys.exit({run_returncode})\n"
+    )
+    script.chmod(0o755)
+    return script
+
+
+class FindCtagsTests(unittest.TestCase):
+    def test_recognizes_universal_ctags_by_version_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = _fake_ctags(Path(tmp), version_output="Universal Ctags 6.1.0\n")
+            self.assertTrue(indexer._is_universal_ctags(str(binary)))
+
+    def test_rejects_a_non_universal_ctags_by_version_string(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # this is exactly the failure mode on macOS: /usr/bin/ctags is the
+            # Xcode-bundled BSD ctags, which rejects --version-style long
+            # options outright rather than printing anything recognizable.
+            binary = _fake_ctags(Path(tmp), version_output="", version_returncode=1)
+            self.assertFalse(indexer._is_universal_ctags(str(binary)))
+
+    def test_missing_binary_is_not_universal_ctags(self):
+        self.assertFalse(indexer._is_universal_ctags("/no/such/ctags-binary"))
+
+
+class BuildIndexTests(unittest.TestCase):
+    def test_returns_none_when_ctags_unavailable(self):
+        with patch.object(indexer, "find_ctags", return_value=None):
+            self.assertIsNone(indexer.build_index(Path("."), ["a.rs"]))
+
+    def test_returns_none_when_no_files_match_a_supported_language(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = _fake_ctags(Path(tmp), version_output="unused")
+            result = indexer.build_index(Path(tmp), ["README.md"], binary=str(binary))
+        self.assertIsNone(result)
+
+    def test_parses_ctags_json_output_into_a_line_numbered_listing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stdout = "\n".join([
+                json.dumps({"_type": "tag", "name": "embed", "path": "src/tsne/mod.rs",
+                            "kind": "function", "line": 40}),
+                json.dumps({"_type": "tag", "name": "pairwise_affinities", "path": "src/tsne/mod.rs",
+                            "kind": "function", "line": 12}),
+                json.dumps({"_type": "tag", "name": "new", "path": "src/trigram/mod.rs",
+                            "kind": "method", "line": 8, "scope": "TrigramProfile"}),
+            ]) + "\n"
+            binary = _fake_ctags(root, version_output="Universal Ctags 6.1.0\n", run_stdout=stdout)
+            result = indexer.build_index(
+                root, ["src/tsne/mod.rs", "src/trigram/mod.rs"], binary=str(binary)
+            )
+        self.assertIsNotNone(result)
+        self.assertIn("TrigramProfile::new", result)
+        # sorted by file, then by line number within a file
+        tsne_header = result.index("src/tsne/mod.rs:")
+        first_line = result.index("12\tfunction\tpairwise_affinities")
+        second_line = result.index("40\tfunction\tembed")
+        self.assertLess(tsne_header, first_line)
+        self.assertLess(first_line, second_line)
+
+    def test_nonzero_exit_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = _fake_ctags(root, version_output="Universal Ctags 6.1.0\n", run_returncode=1)
+            result = indexer.build_index(root, ["a.rs"], binary=str(binary))
+        self.assertIsNone(result)
+
+
+class SymbolSectionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.email", "harness@test")
+        git(self.root, "config", "user.name", "harness")
+        (self.root / "src").mkdir()
+        (self.root / "src" / "lib.rs").write_text("pub fn embed() {}\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "baseline")
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_falls_back_to_regex_scan_when_ctags_unavailable(self):
+        with patch.object(indexer, "find_ctags", return_value=None):
+            section = RepoContext(self.root, budget=Budget()).symbol_section()
+        self.assertNotIn("via ctags", section.title)
+        self.assertIn("embed", section.body)
+
+    def test_uses_ctags_output_when_available(self):
+        with patch(
+            "agent_harness.context.indexer.build_index",
+            return_value="src/lib.rs:\n  1\tfunction\tembed",
+        ):
+            section = RepoContext(self.root, budget=Budget()).symbol_section()
+        self.assertIn("via ctags", section.title)
+        self.assertIn("1\tfunction\tembed", section.body)
 
 
 class HarnessEndToEndTests(unittest.TestCase):
