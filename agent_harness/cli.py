@@ -14,7 +14,7 @@ from .context import Budget, RepoContext
 from .graphmodel import LEAF_FIRST, ORDERS, ROOT_FIRST, Graph, GraphError
 from .prompts import PromptBuilder
 from .review import Reviewer
-from .runner import VIOLATION_POLICIES, Harness, HarnessOptions, ON_VIOLATION_RETRY
+from .runner import VIOLATION_POLICIES, Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
 from .scope import ScopeConfig, ScopeResolver
 from .state import DONE, RunState
 from .stubs import StubIndex
@@ -99,12 +99,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="extra argument passed through to the backend (repeatable)")
 
     r = p.add_argument_group("review pass (DRY / SOLID / scope)")
-    r.add_argument("--review-backend", choices=BACKENDS, help="enable the review pass")
-    r.add_argument("--review-model")
-    r.add_argument("--review-agent")
+    r.add_argument("--review-backend", choices=BACKENDS,
+                   help="backend for the review pass (default: same as --backend — a node "
+                        "reviews its own diff unless you point this at a different backend)")
+    r.add_argument("--review-model", help="default: same as --model")
+    r.add_argument("--review-agent", help="default: same as --agent")
     r.add_argument("--review-server-url")
     r.add_argument("--review-gguf")
-    r.add_argument("--no-review", action="store_true", help="disable review even if configured")
+    r.add_argument("--no-review", action="store_true", help="disable review entirely")
     r.add_argument("--require-review", action="store_true",
                    help="a node may not be marked done unless a review agent actually read "
                         "its diff and passed it. Makes an unreachable or unintelligible "
@@ -142,6 +144,53 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--freeze", action="append", default=[], metavar="GLOB",
                    help="treat these paths as protected for this run. Use after a shared "
                         "contract lands so later nodes consume it instead of reinventing it")
+
+    d = p.add_argument_group("self-correction")
+    d.add_argument("--confirm-changes", action="store_true",
+                   help="after each implementation attempt, send one blunt follow-up in "
+                        "the SAME opencode session: 'Were the changes made? Make sure you "
+                        "actually did what was asked.' Cheap compared to --double-check (no "
+                        "fresh session, no spec re-read) — for the specific failure of a "
+                        "reasoning model stopping mid-plan without ever calling a write tool. "
+                        "Only opencode has a resumable session to continue; ignored on other "
+                        "backends. Off by default: it is still one more agent call per "
+                        "attempt, real wall-clock cost on a slow model.")
+    d.add_argument("--fix-rounds", type=int, default=0, metavar="N",
+                   help="instead of immediately reverting/restarting a scope violation or a "
+                        "failed gate (build/test or review), first try up to N fixer turns in "
+                        "the SAME opencode session: hand the agent the specific violation or "
+                        "gate rejection and ask it to fix exactly that, keeping the rest of "
+                        "its work. Falls through to the normal revert/retry behavior if still "
+                        "unresolved after N rounds — bounded, not a way to loop forever. Each "
+                        "fixer turn also gets its own scope re-audit. Off by default (0): a "
+                        "violation reverts to the last good snapshot and a failed gate retries "
+                        "from a fresh attempt, same as before this option existed.")
+    d.add_argument("--double-check", type=int, default=0, metavar="N",
+                   help="after a node's implementation passes its gate, ask the SAME agent "
+                        "to re-read its diff against the node's specification and rectify any "
+                        "discrepancies, N times (default: 0/off). Only runs for agentic "
+                        "backends (opencode); a round that breaks the fence or the gate is "
+                        "reverted rather than kept")
+    d.add_argument("--allow-partial", action="store_true",
+                   help="an escape hatch: an agent may leave a HARNESS-PARTIAL(<node>): "
+                        "<reason> marker at a genuinely infeasible piece of its own job "
+                        "instead of being forced to either fully finish or fail outright. "
+                        "The node is kept (not reverted) and marked 'partial' in state.json, "
+                        "but is NOT flagged implemented in the graph, so a later --resume "
+                        "retries it with the existing partial work as context. Build/test "
+                        "still must pass either way — this waives spec completeness, not "
+                        "correctness. Off by default: without it, a HARNESS-PARTIAL marker "
+                        "is treated as an incomplete attempt and retried.")
+    d.add_argument("--noop-check", action="store_true",
+                   help="before spending a full write-capable attempt, ask the same agent a "
+                        "cheap read-only question: does the codebase already do this node's "
+                        "whole job? Only accepted when the agent names the exact existing "
+                        "code doing it AND the build/test gate still passes; a HARNESS-STUB "
+                        "or any placeholder body is defined as never a no-op. A true verdict "
+                        "flags the node implemented without writing anything, marked 'noop' "
+                        "in state.json for auditability. Off by default: an extra agent call "
+                        "on every node is real wall-clock cost on a slow model, worth paying "
+                        "only when you suspect the graph and the code have drifted apart.")
 
     m = p.add_argument_group("model tiering")
     m.add_argument("--strong-model", help="a second, more capable model for structural nodes")
@@ -234,12 +283,17 @@ def _run_steps(label: str, commands, cwd) -> int:
 
 
 def _review_spec(args) -> AgentSpec | None:
-    if args.no_review or not args.review_backend:
+    """Review defaults to the SAME backend/model/agent as the build pass — a
+    node reviewing its own diff — unless --review-* overrides it or
+    --no-review turns it off. Only --no-review disables review; there is no
+    longer an implicit "unset --review-backend means off".
+    """
+    if args.no_review:
         return None
     return AgentSpec(
-        backend=args.review_backend,
+        backend=args.review_backend or args.backend,
         model=args.review_model or args.model,
-        agent=args.review_agent,
+        agent=args.review_agent or args.agent,
         binary=args.agent_binary,
         server_url=args.review_server_url or args.server_url,
         api_key=args.api_key,
@@ -280,6 +334,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     context_files = list(dict.fromkeys(list(config.context_files) + args.context_file))
 
+    if args.reset and args.resume:
+        print("error: --reset and --resume contradict each other — --reset deletes the run "
+              "state before --resume ever gets to check it, so every node (including ones "
+              "already marked done) would be rebuilt from scratch. Drop one of the two.",
+              file=sys.stderr)
+        return 2
+
     state_dir = (root / args.state_dir) if not Path(args.state_dir).is_absolute() else Path(args.state_dir)
     state_path = state_dir / "state.json"
     if args.reset and state_path.exists():
@@ -296,6 +357,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"warning: {len(cyclic)} node(s) sit in a dependency cycle and were appended last: "
               f"{', '.join(graph.node(i).name for i in cyclic)}")
 
+    scopes = ScopeResolver(graph, config)
+    blocked = [(graph.node(i).name, culprit) for i in selection
+               if (culprit := scopes.resolve(graph.node(i)).blocking_deny())]
+    if blocked:
+        print("error: these selected node(s) have their own directory shadowed by a "
+              "deny/--freeze pattern — every attempt would burn a full agent run only to "
+              "fail on a forbidden-path violation:", file=sys.stderr)
+        for name, culprit in blocked:
+            print(f"  {name}: shadowed by {culprit!r}", file=sys.stderr)
+        print("A --freeze meant to protect an already-finished directory can shadow a node the "
+              "graph later added inside it. Drop the offending --freeze, or exclude the node "
+              "with --skip.", file=sys.stderr)
+        return 2
+
     context = RepoContext(root, ignore=config.ignore, budget=Budget(total_chars=args.context_chars))
     if args.context_glob:
         context_files += context.matching(args.context_glob)
@@ -303,7 +378,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.plan_only or args.backend == DRY_RUN:
         for position, i in enumerate(selection, 1):
             node = graph.node(i)
-            scope = ScopeResolver(graph, config).resolve(node)
+            scope = scopes.resolve(node)
             todo = [d.name for d in graph.unimplemented_dependencies(i)]
             print(f"{position:3d}. {node.kind:8s} {node.name}")
             print(_wrap("scope", scope.allow or ["(none)"]))
@@ -338,7 +413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     prompts = PromptBuilder(graph)
     harness = Harness(
         graph=graph, root=root, backend=backend,
-        scopes=ScopeResolver(graph, config), context=context, prompts=prompts,
+        scopes=scopes, context=context, prompts=prompts,
         workspace=workspace,
         verifier=Verifier(verify_cmds, root, timeout=args.verify_timeout),
         reviewer=Reviewer(review_backend, prompts, root),
@@ -351,6 +426,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             stop_on_failure=args.stop_on_failure,
             revert_on_failure=not args.no_revert_on_failure,
             require_review=args.require_review,
+            double_check_rounds=args.double_check,
+            allow_partial=args.allow_partial,
+            noop_check=args.noop_check,
+            confirm_changes=args.confirm_changes,
+            fix_rounds=args.fix_rounds,
         ),
         strong_backend=strong_backend,
         strong_nodes=tuple(args.strong_node),
@@ -389,6 +469,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\ninterrupted; state saved — rerun with --resume")
         return 130
+    except SafetyNetLost as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        print("The harness's own state directory was deleted mid-run — no further revert "
+              "can be trusted, so the walk stopped here rather than continuing on a "
+              "compromised safety net. Inspect the tree by hand before resuming: state.json's "
+              "\"done\" entries may no longer match what is actually on disk if their files "
+              "were caught in the same deletion.", file=sys.stderr)
+        return 3
 
     code = _report(harness, outcomes, state_dir, config)
     post = _run_steps("post", args.post_cmd, root)
@@ -399,13 +487,19 @@ def _report(harness: Harness, outcomes, state_dir: Path, config: ScopeConfig) ->
     print("\n--- summary ---   [V]=build gate passed  [R]=reviewed by an agent")
     failed = 0
     for o in outcomes:
-        mark = {"done": "ok  ", "failed": "FAIL", "skipped": "skip"}.get(o.status, o.status)
+        mark = {"done": "ok  ", "failed": "FAIL", "skipped": "skip",
+                "partial": "part", "noop": "noop"}.get(o.status, o.status)
+        # The reason names the ground the attempt was refused on (runner.REASON_*);
+        # note is the human-readable detail. Only meaningful for a failed attempt —
+        # a done node has no reason, and a partial node's note IS its own explanation.
+        reason = f" ({o.reason})" if o.status == "failed" and o.reason else ""
         detail = f" — {o.note}" if o.note else ""
+        dc = f" · double-checked {o.double_checked}x" if o.double_checked else ""
         # Show what actually vouched for a "done": an unbacked ok is the thing
         # that made the 2026-08-19 state file untrustworthy.
         gate = f"[{'V' if o.verified else '-'}{'R' if o.reviewed else '-'}]"
         print(f"{mark} {gate} {o.node.kind:8s} {o.node.name} "
-              f"({len(o.changed)} files, {o.seconds:.0f}s){detail}")
+              f"({len(o.changed)} files, {o.seconds:.0f}s){reason}{detail}{dc}")
         failed += o.status == "failed"
     outstanding = StubIndex(harness.root, ignore=config.ignore).outstanding()
     if outstanding:

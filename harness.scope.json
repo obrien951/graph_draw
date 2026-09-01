@@ -24,6 +24,7 @@
         ".gitignore"
     ],
     "ignore": [
+        ".salvage/**",
         ".git/**",
         "build/**",
         "cmake-build-*/**",

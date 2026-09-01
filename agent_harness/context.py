@@ -46,7 +46,9 @@ class Budget:
     symbols_chars: int = 10_000
     plan_chars: int = 14_000
     file_chars: int = 24_000        # per file
-    max_files: int = 14
+    max_files: int = 24             # split between related (priority) and the
+                                     # node's own module; total_chars still
+                                     # caps the actual prompt size regardless
 
 
 @dataclass
@@ -185,10 +187,24 @@ class RepoContext:
     # ------------------------------------------------------------- assembling
     def node_paths(self, graph: Graph, node: Node, allow: Sequence[str]) -> list[str]:
         """Existing files worth showing: the node's own scope, then its
-        implemented dependencies' and dependents' modules."""
+        implemented dependencies' and dependents' modules.
+
+        A Function almost never carries dependency edges of its own — they
+        sit on the Class that provides it (a Class node "uses ir::Repo"; its
+        methods just inherit that need). Without inheriting the owner's
+        edges, a Function got nothing from this mechanism at all, which is
+        why a static, blanket --context-file list existed as a workaround:
+        it had no per-node signal to hang scoped context off of. This gives
+        it one, so a Function only sees a contract's files when something in
+        its own ownership chain actually depends on that contract.
+        """
         picked = self.matching(allow)
+        linked = list(graph.dependencies(node.index)) + list(graph.dependents(node.index))
+        owner = graph.owner(node.index)
+        if owner is not None:
+            linked += graph.dependencies(owner.index) + graph.dependents(owner.index)
         related: list[str] = []
-        for other in graph.dependencies(node.index) + graph.dependents(node.index):
+        for other in linked:
             if not other.implemented:
                 continue
             module = other if other.kind == "Module" else graph.owner_module(other.index)
@@ -198,7 +214,12 @@ class RepoContext:
                 f for f in self.matching([f"{module.name}/**"])
                 if Path(f).suffix in (".h", ".hpp", ".cpp", ".txt", ".rs", ".py")
             ]
-        ordered = list(dict.fromkeys(picked + related))
+        # related goes first: it is the harder-won, more specifically relevant
+        # signal (an actual dependency, possibly in another module entirely),
+        # while picked is just "everything else in my own module" — which,
+        # for a module with several sibling nodes, can by itself reach
+        # max_files and starve related out of the list entirely.
+        ordered = list(dict.fromkeys(related + picked))
         return ordered[: self.budget.max_files]
 
     def build(

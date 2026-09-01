@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Resume the qwem graph_draw traversal after an interruption.
+#
+# --resume skips nodes already marked "done" in .harness/state.json instead of
+# rebuilding them. Do NOT add --reset here: --reset deletes state.json before
+# --resume ever gets to check it, silently discarding finished nodes.
+#
+# NOTE: --freeze 'graph_lang/**' was dropped (2026-08-25). It was meant to
+# protect an already-finished graph_lang from unrelated modules, but the graph
+# has since gained an unbuilt node inside graph_lang itself (LabelResolver,
+# B8) — freezing that directory would shadow its own working directory and
+# guarantee a forbidden-path violation on the first real write. graph_lang_cpp
+# and graph_analyze have no pending nodes left, so those two stay frozen.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+./graph_agent.py \
+  --graph graphs/graph_draw.planned.json \
+  --scope-config harness.scope.json \
+  --plan-file IMPLEMENTATION_PLAN.md \
+  --backend opencode \
+  --model felnor/qwen3.8-27b-ud-q6-k \
+  --agent build \
+  --context-chars 55000 \
+  --max-tokens 8192 \
+  --resume \
+  --double-check 2 \
+  --freeze 'graph_lang_cpp/**' \
+  --freeze 'graph_analyze/**' \
+  --context-file graph_lang/languageanalyzer.h \
+  --context-file graph_lang/ir/ir.h \
+  --context-file graph_lang/repofileindex.h \
+  --context-file graph_lang/sourcetext.h \
+  --context-file graph_lang_cpp/cppanalyzer.h \
+  --stop-on-failure

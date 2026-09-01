@@ -152,10 +152,36 @@ class GitWorkspace:
             parts = line.split("\t")
             if len(parts) >= 3 and parts[0].isdigit() and not self._ignored(parts[2]):
                 total += int(parts[0])
-        for path in sorted(set(self._untracked_paths()) - set(snap.untracked)):
+        still_untracked = set(self._untracked_paths())
+        new_untracked = still_untracked - set(snap.untracked)
+        for path in sorted(new_untracked):
             body = self._read_text(self.root / path)
             if body:
                 total += len(body.splitlines())
+        # A file that was ALREADY untracked at snapshot time and is untracked
+        # still isn't covered by either branch above: `git diff` only compares
+        # tracked content against the snapshot commit (untracked files were
+        # never in that commit's tree), and the new_untracked set above only
+        # counts files that did not exist yet at snapshot time. Every node
+        # that edits an existing file in an untracked directory — which is
+        # every node after the first in graph_lang_rust, graph_lang, and
+        # graph_merge, since none of those directories are tracked — hit this
+        # silently and reported "+0 lines" regardless of how much was
+        # actually written. Diff against the backed-up copy instead.
+        if snap.backup_dir is not None:
+            for path in sorted(still_untracked & set(snap.untracked)):
+                full = self.root / path
+                backup = snap.backup_dir / path
+                if not (full.exists() and backup.exists()):
+                    continue
+                diff_out = subprocess.run(
+                    ["git", "diff", "--no-index", "--numstat", str(backup), str(full)],
+                    cwd=str(self.root), capture_output=True, text=True,
+                ).stdout
+                for line in diff_out.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) >= 3 and parts[0].isdigit():
+                        total += int(parts[0])
         return total
 
     # --------------------------------------------------------------- restore

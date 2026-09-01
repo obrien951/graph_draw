@@ -13,9 +13,11 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
 add_subdirectory(graph_lang)
 add_subdirectory(graph_lang_cpp)
+add_subdirectory(graph_lang_rust)
 add_subdirectory(graph_core)
 add_subdirectory(graph_io)
 add_subdirectory(graph_analyze)
+add_subdirectory(graph_merge)
 
 enable_testing()
 add_subdirectory(tests)

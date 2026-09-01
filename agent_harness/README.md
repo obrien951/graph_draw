@@ -104,6 +104,37 @@ File-block backends answer with whole files:
 
 Anything they write still goes through the same scope audit.
 
+## Model hosts
+
+Two Tailscale boxes serve models; both are providers in
+`~/.config/opencode/opencode.json`, so `--backend opencode --model <provider>/<name>`
+reaches either. `tools/resume_qwem_build.sh <host>` picks one.
+
+| host | server | ctx | notes |
+|---|---|---|---|
+| `felnor` | llama-swap, `felnor:8080` | 32768 | 12 models; `--context-chars 55000` |
+| `son-of-felnor` | plain llama.cpp, `son-of-felnor:8080` | 65536 (4 slots) | one model; `--context-chars 100000` |
+
+`son-of-felnor` serves a single gguf and llama.cpp reports its id as the file's
+absolute path. `sync-llama-models.py` (in `~/.config/opencode/`) regenerates
+the `son-of-felnor` provider's model list from that live `/v1/models` response
+and uses the path verbatim as the config key — so right now the only working
+`--model` value is the ugly one:
+`son-of-felnor//home/joe/Downloads/Qwen3-Coder-30B-A3B-Instruct-UD-Q8_K_XL.gguf`
+(verified directly: a clean alias like `son-of-felnor/Qwen3-Coder-30B-A3B...`
+fails with a server error before the request ever reaches llama.cpp — opencode
+resolves `-m` against its own config keys client-side, it does not fall back to
+matching the display `name`). llama.cpp itself ignores the wire `model` field
+in single-model mode, so a hand-renamed key in opencode.json *would* also work
+— but `sync-llama-models.py` will overwrite it back to the raw path on its next
+run, so don't bother unless you also want to maintain that by hand.
+
+As of 2026-08-29, son-of-felnor runs Qwen3-Coder-30B-A3B-Instruct
+(UD-Q8_K_XL, MoE, ~3B active params, NOT a reasoning model — `reasoning: false`
+in opencode.json) instead of the earlier Qwen3.8-27B. felnor's Qwen3.8 builds
+remain reasoning models: they return `reasoning_content` alongside `content`,
+so budget output tokens for thinking as well as code.
+
 ## Run control
 
 State, briefs, prompts, agent logs, verify logs and backups live under

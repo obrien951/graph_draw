@@ -27,6 +27,10 @@ from .pathglob import matches_any
 
 MARKER = "HARNESS-STUB"
 
+#: A node's own escape hatch: "I could not finish this, here is why" rather
+#: than a forward-declared dependency. See find_partial_reason() below.
+PARTIAL_MARKER = "HARNESS-PARTIAL"
+
 #: The harness's own sources quote the marker in docs and examples; never scan
 #: them, or every run reports its own documentation as an unfilled call.
 HARNESS_OWN_PATHS = ("agent_harness/**", "graph_agent.py", "harness.scope.json",
@@ -35,6 +39,63 @@ HARNESS_OWN_PATHS = ("agent_harness/**", "graph_agent.py", "harness.scope.json",
 
 def marker_for(name: str) -> str:
     return f"{MARKER}({name})"
+
+
+def partial_marker_for(name: str) -> str:
+    return f"{PARTIAL_MARKER}({name})"
+
+
+def _files_containing(root: Path, needle: str, ignore: Sequence[str]) -> list[Path]:
+    """Every file (tracked or not) that contains *needle*, ignore-list applied."""
+    try:
+        out = subprocess.run(
+            ["git", "grep", "-l", "-F", needle], cwd=str(root),
+            capture_output=True, text=True,
+        )
+        names = [l for l in out.stdout.splitlines() if l.strip()]
+    except OSError:
+        names = []
+    # git grep misses untracked files; sweep them too.
+    try:
+        extra = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=str(root),
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+    except OSError:
+        extra = []
+    seen: list[Path] = []
+    for name in dict.fromkeys(names + extra):
+        if matches_any(ignore, name):
+            continue
+        p = root / name
+        if p.is_file():
+            seen.append(p)
+    return seen
+
+
+def find_partial_reason(root: str | Path, name: str, ignore: Sequence[str] = ()) -> str | None:
+    """The text after a HARNESS-PARTIAL(<name>) marker still in the tree, if any.
+
+    None means the node carries no such marker — either it was never left
+    partial, or a later pass (a double-check round, a human) already removed
+    it by finishing the work. A marker found with no reason text after it
+    still counts as present, just with a placeholder explanation.
+    """
+    root = Path(root)
+    needle = partial_marker_for(name)
+    pattern = re.compile(re.escape(needle) + r"\s*:?\s*(.*)")
+    for path in _files_containing(root, needle, tuple(ignore) + HARNESS_OWN_PATHS):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in text.splitlines():
+            if needle not in line:
+                continue
+            m = pattern.search(line)
+            reason = m.group(1).strip().rstrip("*/").strip() if m else ""
+            return reason or "(no reason given)"
+    return None
 
 
 #: Per-language body an agent should leave behind.  Shown in the prompt.
@@ -79,30 +140,7 @@ class StubIndex:
         self.context_lines = context_lines
 
     def _candidate_files(self) -> list[Path]:
-        try:
-            out = subprocess.run(
-                ["git", "grep", "-l", MARKER], cwd=str(self.root),
-                capture_output=True, text=True,
-            )
-            names = [l for l in out.stdout.splitlines() if l.strip()]
-        except OSError:
-            names = []
-        # git grep misses untracked files; sweep them too.
-        try:
-            extra = subprocess.run(
-                ["git", "ls-files", "--others", "--exclude-standard"], cwd=str(self.root),
-                capture_output=True, text=True,
-            ).stdout.splitlines()
-        except OSError:
-            extra = []
-        seen: list[Path] = []
-        for name in dict.fromkeys(names + extra):
-            if matches_any(self.ignore, name):
-                continue
-            p = self.root / name
-            if p.is_file():
-                seen.append(p)
-        return seen
+        return _files_containing(self.root, MARKER, self.ignore)
 
     def sites_for(self, name: str, limit: int = 12) -> list[StubSite]:
         needle = marker_for(name)

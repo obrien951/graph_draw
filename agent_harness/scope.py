@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .graphmodel import Graph, Node
-from .pathglob import matches_any
+from .pathglob import first_match, matches_any
 
 DEFAULT_IGNORE = (
     ".git/**", "build/**", "cmake-build-*/**", "**/CMakeFiles/**", ".idea/**", ".qt/**",
@@ -54,6 +54,32 @@ class Scope:
         if matches_any(self.deny, path):
             return False
         return matches_any(self.allow, path)
+
+    def blocking_deny(self) -> str | None:
+        """The deny pattern that would swallow this node's real work, or None.
+
+        Deny always wins over allow (see permits/ScopeAuditor.audit). The
+        node's own directory is where its actual implementation lands; shared
+        glue paths (CMakeLists.txt, shared test fixtures) can't substitute for
+        it, so that directory is checked directly rather than requiring the
+        whole allow-list to be dead — a node can still "have" writable paths
+        in the glue files while its real work is blocked. --freeze is applied
+        globally for a run, so this most often happens when a directory was
+        frozen as "already finished" and the graph later gained a new,
+        unbuilt node inside it.
+        """
+        if not self.allow:
+            return "(no allow-list)"
+        if self.module_dir:
+            return first_match(self.deny, f"{self.module_dir}/__probe__")
+        culprit: str | None = None
+        for pattern in self.allow:
+            probe = pattern.replace("**", "__probe__")
+            hit = first_match(self.deny, probe)
+            if hit is None:
+                return None
+            culprit = hit
+        return culprit
 
     def describe(self) -> str:
         lines = [f"ALLOWED PATHS (create or modify only these):"]
@@ -93,7 +119,14 @@ class ScopeConfig:
             allow=tuple(defaults.get("allow", base.allow)),
             shared_allow=tuple(data.get("shared_allow", base.shared_allow)),
             deny=tuple(data.get("protected", base.deny)) + DEFAULT_PROTECTED,
-            ignore=tuple(data.get("ignore", base.ignore)),
+            # Always union with DEFAULT_IGNORE, never replace it outright — a
+            # custom "ignore" list omitting .harness/** (as str_tsne_rs's did)
+            # makes the harness's own log/work/brief writes look like agent
+            # changes, which the deny list then flags as forbidden-path
+            # violations and reverts, discarding real work for no reason.
+            # deny already gets this guarantee via "+ DEFAULT_PROTECTED"
+            # above; ignore did not, which is exactly the bug that happened.
+            ignore=tuple(dict.fromkeys(list(data.get("ignore", ())) + list(DEFAULT_IGNORE))),
             max_files=int(defaults.get("max_files", base.max_files)),
             max_added_lines=int(defaults.get("max_added_lines", base.max_added_lines)),
             modules=dict(data.get("modules", {})),

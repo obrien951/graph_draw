@@ -7,6 +7,7 @@ path, the retry and the graph update are all exercised for real.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,9 +22,9 @@ from agent_harness.graphmodel import Graph, LEAF_FIRST, ROOT_FIRST
 from agent_harness.patchformat import FileBlockApplier, parse_blocks
 from agent_harness.prompts import PromptBuilder, parse_review
 from agent_harness.review import Reviewer
-from agent_harness.runner import Harness, HarnessOptions, ON_VIOLATION_RETRY
+from agent_harness.runner import Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
 from agent_harness.scope import ScopeAuditor, ScopeConfig, ScopeResolver
-from agent_harness.state import DONE, FAILED, RunState
+from agent_harness.state import DONE, FAILED, NOOP, PARTIAL, RunState
 from agent_harness.stubs import StubIndex, marker_for
 from agent_harness.verify import Verifier
 from agent_harness.workspace import GitWorkspace
@@ -55,19 +56,30 @@ class ScriptedBackend(Backend):
 
     agentic = True
 
-    def __init__(self, root: Path, script):
+    def __init__(self, root: Path, script, supports_continue: bool = False):
         super().__init__(AgentSpec(backend="scripted"))
         self.root = root
         self.script = list(script)
         self.prompts: list[str] = []
+        self.continued: list[bool] = []
+        self.supports_continue = supports_continue
 
     def run(self, request: RunRequest) -> RunResult:
         self.prompts.append(request.prompt)
+        self.continued.append(request.continue_session)
         if not self.script:
             return RunResult(True, text="nothing left to do")
         writes = self.script.pop(0)
+        if isinstance(writes, str):
+            return RunResult(True, text=writes)  # text-only reply, nothing written
         for rel, body in writes.items():
             target = self.root / rel
+            if body is None:  # a fix round deleting what an earlier round wrote
+                target.unlink(missing_ok=True)
+                continue
+            if body == "__RMDIR__":  # simulates `rm -rf .harness/` mid fix-round
+                shutil.rmtree(target, ignore_errors=True)
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(body, encoding="utf-8")
         return RunResult(True, text=f"wrote {', '.join(writes)}")
@@ -231,10 +243,10 @@ class HarnessEndToEndTests(unittest.TestCase):
         git(self.root, "commit", "-qm", "baseline")
         self.addCleanup(self.tmp.cleanup)
 
-    def _harness(self, script, **option_overrides):
+    def _harness(self, script, supports_continue: bool = False, **option_overrides):
         graph = Graph.load(self.graph_path)
         config = ScopeConfig(shared_allow=(), modules={}, nodes={})
-        backend = ScriptedBackend(self.root, script)
+        backend = ScriptedBackend(self.root, script, supports_continue=supports_continue)
         state_dir = self.root / ".harness"
         options = HarnessOptions(order=ROOT_FIRST, attempts=2,
                                  on_violation=ON_VIOLATION_RETRY, **option_overrides)
@@ -312,6 +324,158 @@ class HarnessEndToEndTests(unittest.TestCase):
         harness.verifier = Verifier(["false"], self.root)
         self.assertEqual(harness.run_node(graph.find("Widget")).status, FAILED)
         self.assertEqual((self.root / "core" / "existing.h").read_text(), "#pragma once\n")
+
+    def test_partial_marker_is_accepted_when_allowed(self):
+        harness, _, graph = self._harness(
+            [{"core/widget.cpp": "// HARNESS-PARTIAL(Widget): needs Helper, unbuilt\n"
+                                 "void widget() {}\n"}],
+            allow_partial=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, PARTIAL)
+        self.assertIn("needs Helper", outcome.note)
+        self.assertFalse(graph.find("Widget").implemented)
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(),
+                         "// HARNESS-PARTIAL(Widget): needs Helper, unbuilt\nvoid widget() {}\n")
+
+    def test_partial_marker_is_rejected_and_retried_when_not_allowed(self):
+        harness, backend, graph = self._harness([
+            {"core/widget.cpp": "// HARNESS-PARTIAL(Widget): needs Helper\nvoid widget() {}\n"},
+            {"core/widget.cpp": "// fully done\nvoid widget() {}\n"},
+        ])  # allow_partial defaults False
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 2)
+        self.assertIn("HARNESS-PARTIAL", backend.prompts[1])
+        self.assertTrue(graph.find("Widget").implemented)
+
+    def test_a_resumed_partial_node_is_told_about_its_own_prior_work(self):
+        harness, _, graph = self._harness(
+            [{"core/widget.cpp": "// HARNESS-PARTIAL(Widget): needs Helper, unbuilt\n"}],
+            allow_partial=True,
+        )
+        first = harness.run_node(graph.find("Widget"))
+        self.assertEqual(first.status, PARTIAL)
+
+        harness2, backend2, graph2 = self._harness(
+            [{"core/widget.cpp": "// fully done now\n"}], allow_partial=True,
+        )
+        harness2.run_node(graph2.find("Widget"))
+        self.assertIn("already carries partial work", backend2.prompts[0])
+        self.assertIn("needs Helper, unbuilt", backend2.prompts[0])
+
+    def test_noop_check_marks_the_node_done_without_writing_anything(self):
+        harness, backend, graph = self._harness(
+            ["VERDICT: NOOP\nEVIDENCE: core/existing.h already declares this."],
+            noop_check=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, NOOP)
+        self.assertEqual(outcome.changed, {})
+        self.assertIn("core/existing.h already declares this.", outcome.note)
+        self.assertTrue(graph.find("Widget").implemented)
+        self.assertIn("Before implementing", backend.prompts[0])
+
+    def test_noop_check_that_disagrees_proceeds_to_implement(self):
+        harness, backend, graph = self._harness(
+            ["VERDICT: IMPLEMENT", {"core/widget.cpp": "// real work\n"}],
+            noop_check=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 1)
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(), "// real work\n")
+
+    def test_noop_check_that_writes_anyway_is_reverted_and_treated_as_implement(self):
+        """A checker that disobeys "do not edit files" cannot be trusted, so its
+        writes are discarded and the node falls through to a real attempt."""
+        harness, backend, graph = self._harness(
+            [{"core/sneaky.cpp": "should not survive\n"}, {"core/widget.cpp": "// real work\n"}],
+            noop_check=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertFalse((self.root / "core" / "sneaky.cpp").exists())
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(), "// real work\n")
+
+    def test_noop_verdict_is_not_trusted_when_verify_currently_fails(self):
+        harness, backend, graph = self._harness(
+            ["VERDICT: NOOP\nEVIDENCE: nope, actually not"],
+            noop_check=True,
+        )
+        harness.verifier = Verifier(["false"], self.root)
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertNotEqual(outcome.status, NOOP)
+        self.assertFalse(graph.find("Widget").implemented)
+
+    def test_confirm_changes_sends_a_blunt_followup_in_the_same_session(self):
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// impl\n"}, "yes, done"],
+            supports_continue=True, confirm_changes=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(len(backend.prompts), 2)
+        self.assertIn("Were the changes made", backend.prompts[1])
+        self.assertEqual(backend.continued, [False, True])
+
+    def test_confirm_changes_is_skipped_for_a_backend_that_cannot_continue(self):
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// impl\n"}],
+            supports_continue=False, confirm_changes=True,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(len(backend.prompts), 1)
+
+    def test_fix_round_resolves_scope_violation_instead_of_reverting(self):
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// ok\n", "keepout/other.cpp": "oops\n"},
+             {"keepout/other.cpp": "original\n"}],  # fix round undoes the stray write
+            supports_continue=True, fix_rounds=2,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 1)
+        self.assertEqual((self.root / "keepout" / "other.cpp").read_text(), "original\n")
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(), "// ok\n")
+
+    def test_fix_round_resolves_a_failed_gate_instead_of_restarting(self):
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// first\n"},
+             {"core/widget.cpp": "// first\n", "core/needed.txt": "x\n"}],
+            supports_continue=True, fix_rounds=2,
+        )
+        harness.verifier = Verifier(["test -f core/needed.txt"], self.root)
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 1)
+        self.assertTrue((self.root / "core" / "needed.txt").exists())
+
+    def test_fix_round_deleting_state_dir_raises_safety_net_lost(self):
+        """str_tsne_rs, 2026-08-30: a fix round ran `rm -rf .harness/
+        src/clustering/` because git status showed both as untracked. That
+        must stop the walk outright, not be treated as a normal failure."""
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// ok\n", "keepout/other.cpp": "oops\n"},
+             {".harness": "__RMDIR__"}],
+            supports_continue=True, fix_rounds=2,
+        )
+        with self.assertRaises(SafetyNetLost):
+            harness.run_node(graph.find("Widget"))
+
+    def test_fix_rounds_exhausted_falls_back_to_revert_and_retry(self):
+        harness, backend, graph = self._harness(
+            [{"core/widget.cpp": "// bad attempt\n", "keepout/other.cpp": "still bad\n"},
+             {"keepout/other.cpp": "still bad\n"},  # fix round does not actually fix it
+             {"core/widget.cpp": "// clean second attempt\n"}],  # attempt 2, no violation
+            supports_continue=True, fix_rounds=1,
+        )
+        outcome = harness.run_node(graph.find("Widget"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual(outcome.attempts, 2)
+        self.assertEqual((self.root / "keepout" / "other.cpp").read_text(), "original\n")
+        self.assertEqual((self.root / "core" / "widget.cpp").read_text(), "// clean second attempt\n")
 
     def test_strong_model_is_chosen_only_for_the_nominated_nodes(self):
         harness, backend, graph = self._harness([{"core/widget.cpp": "x\n"}])

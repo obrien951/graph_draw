@@ -171,6 +171,21 @@ class Graph:
             frontier = nxt
         return None
 
+    def owner(self, index: int) -> Node | None:
+        """The single node that directly owns this one (one contains/provides
+        hop up — a Function's Class, or a Class'/Function's Module), if any.
+
+        Unlike owner_module, this does not walk past the first owner: a
+        Function almost never carries dependency edges of its own (they sit
+        on the Class that provides it), so a caller wanting "what does this
+        node actually depend on" needs the immediate owner specifically, not
+        wherever the module chain eventually bottoms out.
+        """
+        for e in self._in[index]:
+            if any(lbl in e.comment.lower() for lbl in OWNERSHIP_LABELS):
+                return self.nodes[e.origin]
+        return None
+
     def order(self, strategy: str = ROOT_FIRST) -> tuple[list[int], list[int]]:
         """Return (ordered node indices, indices involved in a cycle).
 

@@ -1,1206 +1,1206 @@
 {
-  "nodes": [
-    {
-      "kind": "Module",
-      "name": "graph_core",
-      "comment": "Static library holding the domain model and interactive scene: GraphNode, GraphEdge, GraphScene, GraphView. Unchanged by the Part B refactor \u2014 NodeType stays {Module, Class, Function}.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_io",
-      "comment": "Static library that reads and writes a GraphScene as JSON. Unchanged by Part B; graph_analyze stops linking it, since analysis no longer touches serialization.",
-      "implemented": true,
-      "position": {
-        "x": 180.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_lang",
-      "comment": "NEW (B1). Language-neutral foundation: the ir:: intermediate representation, the LanguageAnalyzer interface, the shared repo file index, C-family lexing helpers, and the label resolver. Links Qt Core ONLY \u2014 never graph_core \u2014 so analyzers structurally cannot build scene items and their tests need no QApplication.",
-      "implemented": true,
-      "position": {
-        "x": 360.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_lang_cpp",
-      "comment": "NEW (B3). The existing C++ scanner moved behind LanguageAnalyzer, with behaviour preserved byte-for-byte. Links graph_lang.",
-      "implemented": true,
-      "position": {
-        "x": 540.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_lang_rust",
-      "comment": "NEW (B4-B8). Rust language plugin: minimal Cargo.toml reader, Rust-dialect lexer, brace-depth item scanner, and the analyzer that assembles them. Links graph_lang.",
-      "implemented": false,
-      "position": {
-        "x": 720.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_analyze",
-      "comment": "Reduced to two responsibilities: GraphBuilder (ir::Repo -> GraphScene) and RepoAnalyzer (detect language, dispatch to plugins, build). The ~300-line analyze() monolith drops to roughly 80 lines of dispatch. Keeps its path and class name so main.cpp and the tests need no edits.",
-      "implemented": true,
-      "position": {
-        "x": 900.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_merge",
-      "comment": "NEW (B9). Graph-to-graph merge that folds a freshly generated graph into a hand-curated plan without destroying curated prose or layout. Depends on graph_core only, deliberately not graph_io, so it is testable with two in-memory scenes.",
-      "implemented": false,
-      "position": {
-        "x": 1080.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "app",
-      "comment": "Thin Qt GUI integration root. Unchanged by Part B.",
-      "implemented": true,
-      "position": {
-        "x": 1260.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "repo_to_graph",
-      "comment": "CLI tool. Gains QCommandLineParser plus --lang and --merge. The default output path stays <root>/graphs/<name>.generated.json so it can never clobber a curated graph.",
-      "implemented": true,
-      "position": {
-        "x": 1440.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Module",
-      "name": "graph_draw_tests",
-      "comment": "Catch2 v3 suite. test_repoanalyzer.cpp is the regression contract for the whole refactor and must pass unedited; new files cover sourcetext, cargotoml, rustlexer, rustanalyzer, graphbuilder, and graphmerger.",
-      "implemented": true,
-      "position": {
-        "x": 1620.0,
-        "y": 0.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphNode",
-      "comment": "QGraphicsObject for a Module, Class, or Function. Holds the label, the comment (which doubles as the implementation prompt), the implemented flag, and a self-nulling edge registry. Exposes dependency queries derived from edge direction.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphEdge",
-      "comment": "QGraphicsObject drawing a directed arrow between two GraphNodes, clipped to each node's border and recomputed whenever an endpoint moves.",
-      "implemented": true,
-      "position": {
-        "x": 180.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphScene",
-      "comment": "QGraphicsScene owning nodes and edges, driving editing via an EditMode state machine and exposing graph-wide dependency queries.",
-      "implemented": true,
-      "position": {
-        "x": 360.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphView",
-      "comment": "QGraphicsView providing zoom, space-drag panning, and a dotted background grid.",
-      "implemented": true,
-      "position": {
-        "x": 540.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphSerializer",
-      "comment": "Saves and loads a GraphScene as JSON. Edges reference nodes by index into scene order; 'implemented' is optional on load and defaults to false.",
-      "implemented": true,
-      "position": {
-        "x": 720.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "LanguageAnalyzer",
-      "comment": "NEW (B1). Abstract base every language plugin implements: id(), detect(index), analyze(index, ir::Repo*, error*). detect() takes the prebuilt file index rather than a path, which is what makes polyglot repos free and keeps the filesystem walk to exactly one pass. analyze() APPENDS, never clears, so several analyzers can contribute to one graph.",
-      "implemented": true,
-      "position": {
-        "x": 900.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "RepoFileIndex",
-      "comment": "NEW (B1). One filesystem walk shared by every analyzer, with build and VCS noise removed. Must NOT descend into skipped directories \u2014 today's QDirIterator descends and filters afterwards, which is merely wasteful for C++ but fatal for Rust, where a warm target/ holds tens of thousands of files. Skips any directory containing CACHEDIR.TAG, which Cargo writes into target/.",
-      "implemented": true,
-      "position": {
-        "x": 1080.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "LabelResolver",
-      "comment": "NEW (B8). Two-pass shortest-unique-label picker. Node labels word-wrap into a 140x65 box with no eliding and '::' is not a wrap point, so crate-qualifying every Rust item renders as mush; but leaving names bare lets Error/Config/AppState collide across crates and the builder would silently drop the second. observe() every candidate list, then resolve() returns the shortest unambiguous one.",
-      "implemented": false,
-      "position": {
-        "x": 1260.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "ir::Repo",
-      "comment": "NEW (B2). One repository's worth of nodes: a list of ir::Module and a list of ir::Type, contributed by one or more analyzers. Ordering is node creation order and therefore JSON array order, so analyzers must be deterministic.",
-      "implemented": true,
-      "position": {
-        "x": 1440.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "ir::Module",
-      "comment": "NEW (B2). A Module node in the IR: label, description, dependsOnLabels, childModuleLabels, and free functions. Covers a CMake target, a directory fallback, a Cargo crate, and a Rust module.",
-      "implemented": true,
-      "position": {
-        "x": 1620.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "ir::Type",
-      "comment": "NEW (B2). A Class node in the IR: label, description, owning moduleLabel, baseLabels, usesLabels, and methods. Covers a C++ class/struct and a Rust struct/enum/trait/union.",
-      "implemented": true,
-      "position": {
-        "x": 1800.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "ir::Function",
-      "comment": "NEW (B2). A Function node in the IR: label plus description. Descriptions live in the IR rather than being formatted by the builder \u2014 today the function description is built inside the scene phase, which is exactly why ModuleInfo/ClassInfo are not quite language-neutral as they stand.",
-      "implemented": true,
-      "position": {
-        "x": 1980.0,
-        "y": 320.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "CppAnalyzer",
-      "comment": "NEW (B3), but pure motion. Receives isCppSource, isGeneratedSource, isNonFunctionWord, extractMethods, baseIdentifier, readCommandArgs, the class/include regexes, and the CMake target parsing verbatim. The only behavioural change: the 'uses' computation moves analyzer-side and iterates in sorted order, fixing today's nondeterministic edge array ordering.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "TomlDocument",
-      "comment": "NEW (B5). Read-only Cargo.toml reader flattened to dotted paths (package.name, bin[1].name, dependencies.sqlx.version). Qt ships no TOML parser. Insertion-ordered storage so keys() follows file order and output stays deterministic. Handles quoted header segments, [[array-of-tables]], multi-line arrays, inline tables, and dotted keys; deliberately does NOT handle dates, floats, nested inline tables, or validation.",
-      "implemented": false,
-      "position": {
-        "x": 180.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "RustFileItems",
-      "comment": "NEW (B7). Per-file scan result: types, impl blocks, free functions, use paths, and the file's inner //! doc. Produced by a single brace-depth scanner rather than global regex matches, which is what keeps impls inside macro_rules! bodies and fns inside function bodies out of the graph.",
-      "implemented": false,
-      "position": {
-        "x": 360.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "RustAnalyzer",
-      "comment": "NEW (B6-B8). Discovers crates from Cargo.toml, derives depth-1 nested modules from the filesystem, scans items, and resolves edges. Crate label is package.name \u2014 the same name that appears in use statements and other crates' [dependencies], which makes edge resolution trivial.",
-      "implemented": false,
-      "position": {
-        "x": 540.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "RepoAnalyzer",
-      "comment": "Public API unchanged (analyze, lastError) so main.cpp and test_repoanalyzer.cpp need no edits. Body becomes: build the file index once, run every analyzer whose detect() matches (or the one named by --lang), merge into one ir::Repo, hand it to GraphBuilder. Gains setLanguage, languagesUsed, and a scene-free analyzeToIr.",
-      "implemented": true,
-      "position": {
-        "x": 720.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphBuilder",
-      "comment": "NEW (B2). The single place that knows the five edge labels and the node layout. Turns an ir::Repo into GraphNodes and GraphEdges; language plugins never touch graph_core. All edge endpoints are labels rather than indices, and unresolved labels are silently dropped \u2014 which reproduces today's 'only link a base class that is itself a node' guard without special-casing it.",
-      "implemented": true,
-      "position": {
-        "x": 900.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "GraphMerger",
-      "comment": "NEW (B9). Folds a generated graph into a curated one, matching by (kind, label). The curated graph is authoritative for prose and layout, the generated one for what exists on disk. Nothing is ever deleted: nodes missing from the code are kept and flipped to implemented=false, which is precisely what turns readyToImplement() into a work queue.",
-      "implemented": false,
-      "position": {
-        "x": 1080.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Class",
-      "name": "MainWindow",
-      "comment": "Qt main window: toolbar of edit modes, save/load JSON, export PNG, zoom and fit.",
-      "implemented": true,
-      "position": {
-        "x": 1260.0,
-        "y": 450.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphNode::dependencies",
-      "comment": "Targets of this node's outgoing edges, per the A -> B means 'A depends on B' convention. Self-loops and duplicates ignored.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphNode::unimplementedDependencies",
-      "comment": "The subset of dependencies() not yet implemented \u2014 the pieces that must be built or stubbed before this node can be implemented against real code.",
-      "implemented": true,
-      "position": {
-        "x": 180.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphNode::dependencyStatus",
-      "comment": "NoDependencies, Ready, or Blocked. After a merge this is what makes the planned-but-unbuilt nodes actionable.",
-      "implemented": true,
-      "position": {
-        "x": 360.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphNode::borderPoint",
-      "comment": "Point on this node's silhouette in the direction of a scene point; used by GraphEdge to clip arrow endpoints.",
-      "implemented": true,
-      "position": {
-        "x": 540.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphEdge::recomputeGeometry",
-      "comment": "Reclips the line to both node borders and rebuilds the arrowhead whenever an endpoint moves.",
-      "implemented": true,
-      "position": {
-        "x": 720.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphScene::readyToImplement",
-      "comment": "Unimplemented nodes whose dependencies are all done. The primary consumer of merge mode.",
-      "implemented": true,
-      "position": {
-        "x": 900.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphScene::blocked",
-      "comment": "Unimplemented nodes still waiting on at least one unimplemented dependency.",
-      "implemented": true,
-      "position": {
-        "x": 1080.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphSerializer::saveToFile",
-      "comment": "Writes nodes then edges; edges reference nodes by index into scene order.",
-      "implemented": true,
-      "position": {
-        "x": 1260.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphSerializer::loadFromFile",
-      "comment": "Reads the JSON back, rejecting unknown node kinds and out-of-range edge indices.",
-      "implemented": true,
-      "position": {
-        "x": 1440.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "buildRepoFileIndex",
-      "comment": "NEW (B1). Recursive walk that never DESCENDS into skipped directories, visiting entries in sorted order per directory so the file list is deterministic. Preserve the existing quirk that the skip predicate is applied to the file's own basename too, not just directories.",
-      "implemented": true,
-      "position": {
-        "x": 1620.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "sourcetext::blankC",
-      "comment": "NEW (B1). Today's blankCommentsAndStrings moved unmodified. Blanks C-family comments and literals to spaces, preserving newlines AND total length so regex offsets still index the raw text. Make that length invariant explicit and tested \u2014 it is load-bearing today but only implicit, and the Rust lexer must satisfy it too.",
-      "implemented": true,
-      "position": {
-        "x": 1800.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "sourcetext::leadingComment",
-      "comment": "NEW (B1). The contiguous comment block immediately above a declaration, stripped of markers, which becomes the node's implementation prompt.",
-      "implemented": true,
-      "position": {
-        "x": 1980.0,
-        "y": 770.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "sourcetext::matchingBrace",
-      "comment": "NEW (B1). Index just past the '}' matching a given '{'. Factors out the identical brace-matching loops in the C++ class scanner and the Rust item scanner.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "LanguageAnalyzer::id",
-      "comment": "NEW (B1). Stable short id used by --lang and in messages: 'cpp', 'rust'.",
-      "implemented": true,
-      "position": {
-        "x": 180.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "LanguageAnalyzer::detect",
-      "comment": "NEW (B1). Cheap, pure decision from the already-built file index, with no filesystem access of its own.",
-      "implemented": true,
-      "position": {
-        "x": 360.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "LanguageAnalyzer::analyze",
-      "comment": "NEW (B1). Appends this language's nodes into an ir::Repo, returning false and setting an error on failure. Must produce a deterministic order.",
-      "implemented": true,
-      "position": {
-        "x": 540.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RepoFileIndex::named",
-      "comment": "NEW (B1). Absolute paths whose basename is exactly the given name, e.g. CMakeLists.txt or Cargo.toml.",
-      "implemented": true,
-      "position": {
-        "x": 720.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RepoFileIndex::withSuffix",
-      "comment": "NEW (B1). Absolute paths whose basename ends with any of the given suffixes, case-insensitively.",
-      "implemented": true,
-      "position": {
-        "x": 900.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "LabelResolver::observe",
-      "comment": "NEW (B8). Pass one: register every item's candidate labels, ordered short to long.",
-      "implemented": false,
-      "position": {
-        "x": 1080.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "LabelResolver::resolve",
-      "comment": "NEW (B8). Pass two: the first candidate that is unique repo-wide, else the longest.",
-      "implemented": false,
-      "position": {
-        "x": 1260.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "CppAnalyzer::detect",
-      "comment": "NEW (B3). True when the index holds a CMakeLists.txt or any C/C++ source.",
-      "implemented": true,
-      "position": {
-        "x": 1440.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "CppAnalyzer::analyze",
-      "comment": "NEW (B3). CMake targets to modules, class/struct definitions to types, member functions to methods, includes to 'uses'. Behaviour must be preserved exactly: test_repoanalyzer.cpp passes with zero edits and the generated graph's node and edge SETS are unchanged.",
-      "implemented": true,
-      "position": {
-        "x": 1620.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "rustlex::blank",
-      "comment": "NEW (B4). Rust-dialect blanking, as a forward scanner rather than an enum state machine because raw strings need lookahead and block comments nest. Must handle: nested block comments via a depth counter; r\"\", r#\"\"#, r##\"\"## matched on hash count; byte forms b\"\" and br#\"\"#; and the lifetime-versus-char ambiguity, where 'a is a lifetime but 'a' is a char. The trap is raw IDENTIFIERS: r#type and r#match are not raw strings, and naive detection swallows the rest of the file.",
-      "implemented": false,
-      "position": {
-        "x": 1800.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "rustlex::leadingDoc",
-      "comment": "NEW (B4). Doc comment above an item, skipping blank AND #[attribute] lines \u2014 the dominant real shape is a /// line, then #[derive(...)], then the item. Strips 3 characters for /// and //!, not 2; today's leadingComment removes 2 and leaves a stray slash.",
-      "implemented": false,
-      "position": {
-        "x": 1980.0,
-        "y": 900.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "scanRustFile",
-      "comment": "NEW (B7). Single brace-depth scanner over blanked text. Items are recognised only at item depth, so fns inside function bodies and impls inside macro_rules! bodies never reach the graph. impl headers need a real scan rather than a regex: find the first '{' not nested in <>, (), or [], strip leading generics, split on a depth-0 ' for ', strip a trailing where clause.",
-      "implemented": false,
-      "position": {
-        "x": 0.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "TomlDocument::parseText",
-      "comment": "NEW (B5). Parses to dotted paths. Malformed lines are skipped rather than fatal \u2014 a partial manifest read still yields a usable graph. Multi-line \"\"\" strings must be skipped over without desynchronising the tables that follow.",
-      "implemented": false,
-      "position": {
-        "x": 180.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "TomlDocument::keys",
-      "comment": "NEW (B5). Distinct next path segments under a prefix, in file order \u2014 keys(\"dependencies\") is how crate dependency edges are discovered.",
-      "implemented": false,
-      "position": {
-        "x": 360.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "TomlDocument::stringList",
-      "comment": "NEW (B5). Array values, including multi-line arrays with comments and trailing commas, as used by [workspace] members.",
-      "implemented": false,
-      "position": {
-        "x": 540.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "TomlDocument::tableArrayCount",
-      "comment": "NEW (B5). Number of [[array-of-table]] entries, needed for multiple [[bin]] sections.",
-      "implemented": false,
-      "position": {
-        "x": 720.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RustAnalyzer::detect",
-      "comment": "NEW (B6). True when the index holds any Cargo.toml.",
-      "implemented": false,
-      "position": {
-        "x": 900.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RustAnalyzer::analyze",
-      "comment": "NEW (B6-B8). Crates from [workspace] members plus every Cargo.toml, deduped by directory and sorted by crate name. [lib] never creates a second module; [[bin]] does only when its name differs from the package name. Nested modules are depth-1 and derived from src/ paths, so no mod resolution is needed and the tree cannot disagree with itself.",
-      "implemented": false,
-      "position": {
-        "x": 1080.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RepoAnalyzer::analyze",
-      "comment": "Unchanged signature. Now: build the file index, run matching analyzers, merge into one ir::Repo, call GraphBuilder. The 'No C++ source files found' hard failure is replaced by a message naming every project marker it looked for.",
-      "implemented": true,
-      "position": {
-        "x": 1260.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RepoAnalyzer::analyzeToIr",
-      "comment": "NEW (B3). Scene-free entry point, for tests and for tools that want the raw model without a QApplication.",
-      "implemented": true,
-      "position": {
-        "x": 1440.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "RepoAnalyzer::setLanguage",
-      "comment": "NEW (B3). Restrict analysis to one language id; empty means autodetect. The escape hatch for polyglot repos where labels would collide.",
-      "implemented": true,
-      "position": {
-        "x": 1620.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphBuilder::build",
-      "comment": "NEW (B2). Clears the scene, then creates modules, types, and functions in that order and emits seven edge categories: module->module and module->class and module->function 'contains', class->function 'provides', class->class 'inherits' and 'uses', module->module 'depends on'. Free Rust functions reuse 'contains' rather than introducing a new label.",
-      "implemented": true,
-      "position": {
-        "x": 1800.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "GraphMerger::merge",
-      "comment": "NEW (B9). Survivors keep their curated comment (unless empty, in which case it is filled from the generated one so re-running enriches placeholders) and their curated position. New nodes are laid out BELOW the curated bounding box, not on top of it. Curated-only nodes are kept and forced to implemented=false. Edges are purely additive, so hand-drawn edges the analyzer cannot infer are never lost.",
-      "implemented": false,
-      "position": {
-        "x": 1980.0,
-        "y": 1030.0
-      }
-    },
-    {
-      "kind": "Function",
-      "name": "MainWindow::exportPng",
-      "comment": "Renders the scene's bounding rect, padded, into an ARGB32 image.",
-      "implemented": true,
-      "position": {
-        "x": 0.0,
-        "y": 1160.0
-      }
-    }
-  ],
-  "edges": [
-    {
-      "origin": 1,
-      "destination": 0,
-      "comment": "depends on"
-    },
-    {
-      "origin": 3,
-      "destination": 2,
-      "comment": "depends on"
-    },
-    {
-      "origin": 4,
-      "destination": 2,
-      "comment": "depends on"
-    },
-    {
-      "origin": 5,
-      "destination": 3,
-      "comment": "depends on"
-    },
-    {
-      "origin": 5,
-      "destination": 4,
-      "comment": "depends on"
-    },
-    {
-      "origin": 5,
-      "destination": 0,
-      "comment": "depends on"
-    },
-    {
-      "origin": 6,
-      "destination": 0,
-      "comment": "depends on"
-    },
-    {
-      "origin": 8,
-      "destination": 5,
-      "comment": "depends on"
-    },
-    {
-      "origin": 8,
-      "destination": 1,
-      "comment": "depends on"
-    },
-    {
-      "origin": 8,
-      "destination": 6,
-      "comment": "depends on"
-    },
-    {
-      "origin": 7,
-      "destination": 0,
-      "comment": "depends on"
-    },
-    {
-      "origin": 7,
-      "destination": 1,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 0,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 1,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 5,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 6,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 2,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 3,
-      "comment": "depends on"
-    },
-    {
-      "origin": 9,
-      "destination": 4,
-      "comment": "depends on"
-    },
-    {
-      "origin": 0,
-      "destination": 10,
-      "comment": "contains"
-    },
-    {
-      "origin": 0,
-      "destination": 11,
-      "comment": "contains"
-    },
-    {
-      "origin": 0,
-      "destination": 12,
-      "comment": "contains"
-    },
-    {
-      "origin": 0,
-      "destination": 13,
-      "comment": "contains"
-    },
-    {
-      "origin": 1,
-      "destination": 14,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 15,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 16,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 17,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 18,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 19,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 20,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 21,
-      "comment": "contains"
-    },
-    {
-      "origin": 3,
-      "destination": 22,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 23,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 24,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 25,
-      "comment": "contains"
-    },
-    {
-      "origin": 5,
-      "destination": 26,
-      "comment": "contains"
-    },
-    {
-      "origin": 5,
-      "destination": 27,
-      "comment": "contains"
-    },
-    {
-      "origin": 6,
-      "destination": 28,
-      "comment": "contains"
-    },
-    {
-      "origin": 7,
-      "destination": 29,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 39,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 40,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 41,
-      "comment": "contains"
-    },
-    {
-      "origin": 2,
-      "destination": 42,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 52,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 53,
-      "comment": "contains"
-    },
-    {
-      "origin": 4,
-      "destination": 54,
-      "comment": "contains"
-    },
-    {
-      "origin": 10,
-      "destination": 30,
-      "comment": "provides"
-    },
-    {
-      "origin": 10,
-      "destination": 31,
-      "comment": "provides"
-    },
-    {
-      "origin": 10,
-      "destination": 32,
-      "comment": "provides"
-    },
-    {
-      "origin": 10,
-      "destination": 33,
-      "comment": "provides"
-    },
-    {
-      "origin": 11,
-      "destination": 34,
-      "comment": "provides"
-    },
-    {
-      "origin": 12,
-      "destination": 35,
-      "comment": "provides"
-    },
-    {
-      "origin": 12,
-      "destination": 36,
-      "comment": "provides"
-    },
-    {
-      "origin": 14,
-      "destination": 37,
-      "comment": "provides"
-    },
-    {
-      "origin": 14,
-      "destination": 38,
-      "comment": "provides"
-    },
-    {
-      "origin": 15,
-      "destination": 43,
-      "comment": "provides"
-    },
-    {
-      "origin": 15,
-      "destination": 44,
-      "comment": "provides"
-    },
-    {
-      "origin": 15,
-      "destination": 45,
-      "comment": "provides"
-    },
-    {
-      "origin": 16,
-      "destination": 46,
-      "comment": "provides"
-    },
-    {
-      "origin": 16,
-      "destination": 47,
-      "comment": "provides"
-    },
-    {
-      "origin": 17,
-      "destination": 48,
-      "comment": "provides"
-    },
-    {
-      "origin": 17,
-      "destination": 49,
-      "comment": "provides"
-    },
-    {
-      "origin": 22,
-      "destination": 50,
-      "comment": "provides"
-    },
-    {
-      "origin": 22,
-      "destination": 51,
-      "comment": "provides"
-    },
-    {
-      "origin": 23,
-      "destination": 55,
-      "comment": "provides"
-    },
-    {
-      "origin": 23,
-      "destination": 56,
-      "comment": "provides"
-    },
-    {
-      "origin": 23,
-      "destination": 57,
-      "comment": "provides"
-    },
-    {
-      "origin": 23,
-      "destination": 58,
-      "comment": "provides"
-    },
-    {
-      "origin": 25,
-      "destination": 59,
-      "comment": "provides"
-    },
-    {
-      "origin": 25,
-      "destination": 60,
-      "comment": "provides"
-    },
-    {
-      "origin": 26,
-      "destination": 61,
-      "comment": "provides"
-    },
-    {
-      "origin": 26,
-      "destination": 62,
-      "comment": "provides"
-    },
-    {
-      "origin": 26,
-      "destination": 63,
-      "comment": "provides"
-    },
-    {
-      "origin": 27,
-      "destination": 64,
-      "comment": "provides"
-    },
-    {
-      "origin": 28,
-      "destination": 65,
-      "comment": "provides"
-    },
-    {
-      "origin": 29,
-      "destination": 66,
-      "comment": "provides"
-    },
-    {
-      "origin": 22,
-      "destination": 15,
-      "comment": "inherits"
-    },
-    {
-      "origin": 25,
-      "destination": 15,
-      "comment": "inherits"
-    },
-    {
-      "origin": 26,
-      "destination": 15,
-      "comment": "uses"
-    },
-    {
-      "origin": 26,
-      "destination": 27,
-      "comment": "uses"
-    },
-    {
-      "origin": 26,
-      "destination": 16,
-      "comment": "uses"
-    },
-    {
-      "origin": 26,
-      "destination": 18,
-      "comment": "uses"
-    },
-    {
-      "origin": 27,
-      "destination": 18,
-      "comment": "uses"
-    },
-    {
-      "origin": 27,
-      "destination": 12,
-      "comment": "uses"
-    },
-    {
-      "origin": 27,
-      "destination": 10,
-      "comment": "uses"
-    },
-    {
-      "origin": 27,
-      "destination": 11,
-      "comment": "uses"
-    },
-    {
-      "origin": 22,
-      "destination": 16,
-      "comment": "uses"
-    },
-    {
-      "origin": 22,
-      "destination": 18,
-      "comment": "uses"
-    },
-    {
-      "origin": 25,
-      "destination": 23,
-      "comment": "uses"
-    },
-    {
-      "origin": 25,
-      "destination": 24,
-      "comment": "uses"
-    },
-    {
-      "origin": 25,
-      "destination": 16,
-      "comment": "uses"
-    },
-    {
-      "origin": 25,
-      "destination": 17,
-      "comment": "uses"
-    },
-    {
-      "origin": 25,
-      "destination": 18,
-      "comment": "uses"
-    },
-    {
-      "origin": 28,
-      "destination": 12,
-      "comment": "uses"
-    },
-    {
-      "origin": 28,
-      "destination": 10,
-      "comment": "uses"
-    },
-    {
-      "origin": 14,
-      "destination": 12,
-      "comment": "uses"
-    },
-    {
-      "origin": 10,
-      "destination": 11,
-      "comment": "uses"
-    },
-    {
-      "origin": 12,
-      "destination": 10,
-      "comment": "uses"
-    },
-    {
-      "origin": 12,
-      "destination": 11,
-      "comment": "uses"
-    },
-    {
-      "origin": 29,
-      "destination": 12,
-      "comment": "uses"
-    },
-    {
-      "origin": 29,
-      "destination": 14,
-      "comment": "uses"
-    },
-    {
-      "origin": 29,
-      "destination": 13,
-      "comment": "uses"
-    },
-    {
-      "origin": 18,
-      "destination": 19,
-      "comment": "uses"
-    },
-    {
-      "origin": 18,
-      "destination": 20,
-      "comment": "uses"
-    },
-    {
-      "origin": 20,
-      "destination": 21,
-      "comment": "uses"
-    },
-    {
-      "origin": 19,
-      "destination": 21,
-      "comment": "uses"
-    }
-  ]
+    "nodes": [
+        {
+            "kind": "Module",
+            "name": "graph_core",
+            "comment": "Static library holding the domain model and interactive scene: GraphNode, GraphEdge, GraphScene, GraphView. Unchanged by the Part B refactor \u2014 NodeType stays {Module, Class, Function}.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_io",
+            "comment": "Static library that reads and writes a GraphScene as JSON. Unchanged by Part B; graph_analyze stops linking it, since analysis no longer touches serialization.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_lang",
+            "comment": "NEW (B1). Language-neutral foundation: the ir:: intermediate representation, the LanguageAnalyzer interface, the shared repo file index, C-family lexing helpers, and the label resolver. Links Qt Core ONLY \u2014 never graph_core \u2014 so analyzers structurally cannot build scene items and their tests need no QApplication.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_lang_cpp",
+            "comment": "NEW (B3). The existing C++ scanner moved behind LanguageAnalyzer, with behaviour preserved byte-for-byte. Links graph_lang.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_lang_rust",
+            "comment": "NEW (B4-B8). Rust language plugin: minimal Cargo.toml reader, Rust-dialect lexer, brace-depth item scanner, and the analyzer that assembles them. Links graph_lang.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_analyze",
+            "comment": "Reduced to two responsibilities: GraphBuilder (ir::Repo -> GraphScene) and RepoAnalyzer (detect language, dispatch to plugins, build). The ~300-line analyze() monolith drops to roughly 80 lines of dispatch. Keeps its path and class name so main.cpp and the tests need no edits.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_merge",
+            "comment": "NEW (B9). Graph-to-graph merge that folds a freshly generated graph into a hand-curated plan without destroying curated prose or layout. Depends on graph_core only, deliberately not graph_io, so it is testable with two in-memory scenes.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "app",
+            "comment": "Thin Qt GUI integration root. Unchanged by Part B.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "repo_to_graph",
+            "comment": "CLI tool. Gains QCommandLineParser plus --lang and --merge. The default output path stays <root>/graphs/<name>.generated.json so it can never clobber a curated graph.",
+            "implemented": true,
+            "position": {
+                "x": 1440.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "graph_draw_tests",
+            "comment": "Catch2 v3 suite. test_repoanalyzer.cpp is the regression contract for the whole refactor and must pass unedited; new files cover sourcetext, cargotoml, rustlexer, rustanalyzer, graphbuilder, and graphmerger.",
+            "implemented": true,
+            "position": {
+                "x": 1620.0,
+                "y": 0.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphNode",
+            "comment": "QGraphicsObject for a Module, Class, or Function. Holds the label, the comment (which doubles as the implementation prompt), the implemented flag, and a self-nulling edge registry. Exposes dependency queries derived from edge direction.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphEdge",
+            "comment": "QGraphicsObject drawing a directed arrow between two GraphNodes, clipped to each node's border and recomputed whenever an endpoint moves.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphScene",
+            "comment": "QGraphicsScene owning nodes and edges, driving editing via an EditMode state machine and exposing graph-wide dependency queries.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphView",
+            "comment": "QGraphicsView providing zoom, space-drag panning, and a dotted background grid.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphSerializer",
+            "comment": "Saves and loads a GraphScene as JSON. Edges reference nodes by index into scene order; 'implemented' is optional on load and defaults to false.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "LanguageAnalyzer",
+            "comment": "NEW (B1). Abstract base every language plugin implements: id(), detect(index), analyze(index, ir::Repo*, error*). detect() takes the prebuilt file index rather than a path, which is what makes polyglot repos free and keeps the filesystem walk to exactly one pass. analyze() APPENDS, never clears, so several analyzers can contribute to one graph.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "RepoFileIndex",
+            "comment": "NEW (B1). One filesystem walk shared by every analyzer, with build and VCS noise removed. Must NOT descend into skipped directories \u2014 today's QDirIterator descends and filters afterwards, which is merely wasteful for C++ but fatal for Rust, where a warm target/ holds tens of thousands of files. Skips any directory containing CACHEDIR.TAG, which Cargo writes into target/.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "LabelResolver",
+            "comment": "NEW (B8). Two-pass shortest-unique-label picker. Node labels word-wrap into a 140x65 box with no eliding and '::' is not a wrap point, so crate-qualifying every Rust item renders as mush; but leaving names bare lets Error/Config/AppState collide across crates and the builder would silently drop the second. observe() every candidate list, then resolve() returns the shortest unambiguous one.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "ir::Repo",
+            "comment": "NEW (B2). One repository's worth of nodes: a list of ir::Module and a list of ir::Type, contributed by one or more analyzers. Ordering is node creation order and therefore JSON array order, so analyzers must be deterministic.",
+            "implemented": true,
+            "position": {
+                "x": 1440.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "ir::Module",
+            "comment": "NEW (B2). A Module node in the IR: label, description, dependsOnLabels, childModuleLabels, and free functions. Covers a CMake target, a directory fallback, a Cargo crate, and a Rust module.",
+            "implemented": true,
+            "position": {
+                "x": 1620.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "ir::Type",
+            "comment": "NEW (B2). A Class node in the IR: label, description, owning moduleLabel, baseLabels, usesLabels, and methods. Covers a C++ class/struct and a Rust struct/enum/trait/union.",
+            "implemented": true,
+            "position": {
+                "x": 1800.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "ir::Function",
+            "comment": "NEW (B2). A Function node in the IR: label plus description. Descriptions live in the IR rather than being formatted by the builder \u2014 today the function description is built inside the scene phase, which is exactly why ModuleInfo/ClassInfo are not quite language-neutral as they stand.",
+            "implemented": true,
+            "position": {
+                "x": 1980.0,
+                "y": 320.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "CppAnalyzer",
+            "comment": "NEW (B3), but pure motion. Receives isCppSource, isGeneratedSource, isNonFunctionWord, extractMethods, baseIdentifier, readCommandArgs, the class/include regexes, and the CMake target parsing verbatim. The only behavioural change: the 'uses' computation moves analyzer-side and iterates in sorted order, fixing today's nondeterministic edge array ordering.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "TomlDocument",
+            "comment": "NEW (B5). Read-only Cargo.toml reader flattened to dotted paths (package.name, bin[1].name, dependencies.sqlx.version). Qt ships no TOML parser. Insertion-ordered storage so keys() follows file order and output stays deterministic. Handles quoted header segments, [[array-of-tables]], multi-line arrays, inline tables, and dotted keys; deliberately does NOT handle dates, floats, nested inline tables, or validation.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "RustFileItems",
+            "comment": "NEW (B7). Per-file scan result: types, impl blocks, free functions, use paths, and the file's inner //! doc. Produced by a single brace-depth scanner rather than global regex matches, which is what keeps impls inside macro_rules! bodies and fns inside function bodies out of the graph.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "RustAnalyzer",
+            "comment": "NEW (B6-B8). Discovers crates from Cargo.toml, derives depth-1 nested modules from the filesystem, scans items, and resolves edges. Crate label is package.name \u2014 the same name that appears in use statements and other crates' [dependencies], which makes edge resolution trivial.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "RepoAnalyzer",
+            "comment": "Public API unchanged (analyze, lastError) so main.cpp and test_repoanalyzer.cpp need no edits. Body becomes: build the file index once, run every analyzer whose detect() matches (or the one named by --lang), merge into one ir::Repo, hand it to GraphBuilder. Gains setLanguage, languagesUsed, and a scene-free analyzeToIr.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphBuilder",
+            "comment": "NEW (B2). The single place that knows the five edge labels and the node layout. Turns an ir::Repo into GraphNodes and GraphEdges; language plugins never touch graph_core. All edge endpoints are labels rather than indices, and unresolved labels are silently dropped \u2014 which reproduces today's 'only link a base class that is itself a node' guard without special-casing it.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "GraphMerger",
+            "comment": "NEW (B9). Folds a generated graph into a curated one, matching by (kind, label). The curated graph is authoritative for prose and layout, the generated one for what exists on disk. Nothing is ever deleted: nodes missing from the code are kept and flipped to implemented=false, which is precisely what turns readyToImplement() into a work queue.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Class",
+            "name": "MainWindow",
+            "comment": "Qt main window: toolbar of edit modes, save/load JSON, export PNG, zoom and fit.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 450.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::dependencies",
+            "comment": "Targets of this node's outgoing edges, per the A -> B means 'A depends on B' convention. Self-loops and duplicates ignored.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::unimplementedDependencies",
+            "comment": "The subset of dependencies() not yet implemented \u2014 the pieces that must be built or stubbed before this node can be implemented against real code.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::dependencyStatus",
+            "comment": "NoDependencies, Ready, or Blocked. After a merge this is what makes the planned-but-unbuilt nodes actionable.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphNode::borderPoint",
+            "comment": "Point on this node's silhouette in the direction of a scene point; used by GraphEdge to clip arrow endpoints.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphEdge::recomputeGeometry",
+            "comment": "Reclips the line to both node borders and rebuilds the arrowhead whenever an endpoint moves.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphScene::readyToImplement",
+            "comment": "Unimplemented nodes whose dependencies are all done. The primary consumer of merge mode.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphScene::blocked",
+            "comment": "Unimplemented nodes still waiting on at least one unimplemented dependency.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphSerializer::saveToFile",
+            "comment": "Writes nodes then edges; edges reference nodes by index into scene order.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphSerializer::loadFromFile",
+            "comment": "Reads the JSON back, rejecting unknown node kinds and out-of-range edge indices.",
+            "implemented": true,
+            "position": {
+                "x": 1440.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "buildRepoFileIndex",
+            "comment": "NEW (B1). Recursive walk that never DESCENDS into skipped directories, visiting entries in sorted order per directory so the file list is deterministic. Preserve the existing quirk that the skip predicate is applied to the file's own basename too, not just directories.",
+            "implemented": true,
+            "position": {
+                "x": 1620.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "sourcetext::blankC",
+            "comment": "NEW (B1). Today's blankCommentsAndStrings moved unmodified. Blanks C-family comments and literals to spaces, preserving newlines AND total length so regex offsets still index the raw text. Make that length invariant explicit and tested \u2014 it is load-bearing today but only implicit, and the Rust lexer must satisfy it too.",
+            "implemented": true,
+            "position": {
+                "x": 1800.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "sourcetext::leadingComment",
+            "comment": "NEW (B1). The contiguous comment block immediately above a declaration, stripped of markers, which becomes the node's implementation prompt.",
+            "implemented": true,
+            "position": {
+                "x": 1980.0,
+                "y": 770.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "sourcetext::matchingBrace",
+            "comment": "NEW (B1). Index just past the '}' matching a given '{'. Factors out the identical brace-matching loops in the C++ class scanner and the Rust item scanner.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "LanguageAnalyzer::id",
+            "comment": "NEW (B1). Stable short id used by --lang and in messages: 'cpp', 'rust'.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "LanguageAnalyzer::detect",
+            "comment": "NEW (B1). Cheap, pure decision from the already-built file index, with no filesystem access of its own.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "LanguageAnalyzer::analyze",
+            "comment": "NEW (B1). Appends this language's nodes into an ir::Repo, returning false and setting an error on failure. Must produce a deterministic order.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RepoFileIndex::named",
+            "comment": "NEW (B1). Absolute paths whose basename is exactly the given name, e.g. CMakeLists.txt or Cargo.toml.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RepoFileIndex::withSuffix",
+            "comment": "NEW (B1). Absolute paths whose basename ends with any of the given suffixes, case-insensitively.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "LabelResolver::observe",
+            "comment": "NEW (B8). Pass one: register every item's candidate labels, ordered short to long.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "LabelResolver::resolve",
+            "comment": "NEW (B8). Pass two: the first candidate that is unique repo-wide, else the longest.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "CppAnalyzer::detect",
+            "comment": "NEW (B3). True when the index holds a CMakeLists.txt or any C/C++ source.",
+            "implemented": true,
+            "position": {
+                "x": 1440.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "CppAnalyzer::analyze",
+            "comment": "NEW (B3). CMake targets to modules, class/struct definitions to types, member functions to methods, includes to 'uses'. Behaviour must be preserved exactly: test_repoanalyzer.cpp passes with zero edits and the generated graph's node and edge SETS are unchanged.",
+            "implemented": true,
+            "position": {
+                "x": 1620.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "rustlex::blank",
+            "comment": "NEW (B4). Rust-dialect blanking, as a forward scanner rather than an enum state machine because raw strings need lookahead and block comments nest. Must handle: nested block comments via a depth counter; r\"\", r#\"\"#, r##\"\"## matched on hash count; byte forms b\"\" and br#\"\"#; and the lifetime-versus-char ambiguity, where 'a is a lifetime but 'a' is a char. The trap is raw IDENTIFIERS: r#type and r#match are not raw strings, and naive detection swallows the rest of the file.",
+            "implemented": true,
+            "position": {
+                "x": 1800.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "rustlex::leadingDoc",
+            "comment": "NEW (B4). Doc comment above an item, skipping blank AND #[attribute] lines \u2014 the dominant real shape is a /// line, then #[derive(...)], then the item. Strips 3 characters for /// and //!, not 2; today's leadingComment removes 2 and leaves a stray slash.",
+            "implemented": true,
+            "position": {
+                "x": 1980.0,
+                "y": 900.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "scanRustFile",
+            "comment": "NEW (B7). Single brace-depth scanner over blanked text. Items are recognised only at item depth, so fns inside function bodies and impls inside macro_rules! bodies never reach the graph. impl headers need a real scan rather than a regex: find the first '{' not nested in <>, (), or [], strip leading generics, split on a depth-0 ' for ', strip a trailing where clause.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "TomlDocument::parseText",
+            "comment": "NEW (B5). Parses to dotted paths. Malformed lines are skipped rather than fatal \u2014 a partial manifest read still yields a usable graph. Multi-line \"\"\" strings must be skipped over without desynchronising the tables that follow.",
+            "implemented": true,
+            "position": {
+                "x": 180.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "TomlDocument::keys",
+            "comment": "NEW (B5). Distinct next path segments under a prefix, in file order \u2014 keys(\"dependencies\") is how crate dependency edges are discovered.",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "TomlDocument::stringList",
+            "comment": "NEW (B5). Array values, including multi-line arrays with comments and trailing commas, as used by [workspace] members.",
+            "implemented": true,
+            "position": {
+                "x": 540.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "TomlDocument::tableArrayCount",
+            "comment": "NEW (B5). Number of [[array-of-table]] entries, needed for multiple [[bin]] sections.",
+            "implemented": true,
+            "position": {
+                "x": 720.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RustAnalyzer::detect",
+            "comment": "NEW (B6). True when the index holds any Cargo.toml.",
+            "implemented": true,
+            "position": {
+                "x": 900.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RustAnalyzer::analyze",
+            "comment": "NEW (B6-B8). Crates from [workspace] members plus every Cargo.toml, deduped by directory and sorted by crate name. [lib] never creates a second module; [[bin]] does only when its name differs from the package name. Nested modules are depth-1 and derived from src/ paths, so no mod resolution is needed and the tree cannot disagree with itself.",
+            "implemented": true,
+            "position": {
+                "x": 1080.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RepoAnalyzer::analyze",
+            "comment": "Unchanged signature. Now: build the file index, run matching analyzers, merge into one ir::Repo, call GraphBuilder. The 'No C++ source files found' hard failure is replaced by a message naming every project marker it looked for.",
+            "implemented": true,
+            "position": {
+                "x": 1260.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RepoAnalyzer::analyzeToIr",
+            "comment": "NEW (B3). Scene-free entry point, for tests and for tools that want the raw model without a QApplication.",
+            "implemented": true,
+            "position": {
+                "x": 1440.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "RepoAnalyzer::setLanguage",
+            "comment": "NEW (B3). Restrict analysis to one language id; empty means autodetect. The escape hatch for polyglot repos where labels would collide.",
+            "implemented": true,
+            "position": {
+                "x": 1620.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphBuilder::build",
+            "comment": "NEW (B2). Clears the scene, then creates modules, types, and functions in that order and emits seven edge categories: module->module and module->class and module->function 'contains', class->function 'provides', class->class 'inherits' and 'uses', module->module 'depends on'. Free Rust functions reuse 'contains' rather than introducing a new label.",
+            "implemented": true,
+            "position": {
+                "x": 1800.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "GraphMerger::merge",
+            "comment": "NEW (B9). Survivors keep their curated comment (unless empty, in which case it is filled from the generated one so re-running enriches placeholders) and their curated position. New nodes are laid out BELOW the curated bounding box, not on top of it. Curated-only nodes are kept and forced to implemented=false. Edges are purely additive, so hand-drawn edges the analyzer cannot infer are never lost.",
+            "implemented": true,
+            "position": {
+                "x": 1980.0,
+                "y": 1030.0
+            }
+        },
+        {
+            "kind": "Function",
+            "name": "MainWindow::exportPng",
+            "comment": "Renders the scene's bounding rect, padded, into an ARGB32 image.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 1160.0
+            }
+        }
+    ],
+    "edges": [
+        {
+            "origin": 1,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 3,
+            "destination": 2,
+            "comment": "depends on"
+        },
+        {
+            "origin": 4,
+            "destination": 2,
+            "comment": "depends on"
+        },
+        {
+            "origin": 5,
+            "destination": 3,
+            "comment": "depends on"
+        },
+        {
+            "origin": 5,
+            "destination": 4,
+            "comment": "depends on"
+        },
+        {
+            "origin": 5,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 6,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 5,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 6,
+            "comment": "depends on"
+        },
+        {
+            "origin": 7,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 7,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 5,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 6,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 2,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 3,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 4,
+            "comment": "depends on"
+        },
+        {
+            "origin": 0,
+            "destination": 10,
+            "comment": "contains"
+        },
+        {
+            "origin": 0,
+            "destination": 11,
+            "comment": "contains"
+        },
+        {
+            "origin": 0,
+            "destination": 12,
+            "comment": "contains"
+        },
+        {
+            "origin": 0,
+            "destination": 13,
+            "comment": "contains"
+        },
+        {
+            "origin": 1,
+            "destination": 14,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 15,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 16,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 17,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 18,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 19,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 20,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 21,
+            "comment": "contains"
+        },
+        {
+            "origin": 3,
+            "destination": 22,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 23,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 24,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 25,
+            "comment": "contains"
+        },
+        {
+            "origin": 5,
+            "destination": 26,
+            "comment": "contains"
+        },
+        {
+            "origin": 5,
+            "destination": 27,
+            "comment": "contains"
+        },
+        {
+            "origin": 6,
+            "destination": 28,
+            "comment": "contains"
+        },
+        {
+            "origin": 7,
+            "destination": 29,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 39,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 40,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 41,
+            "comment": "contains"
+        },
+        {
+            "origin": 2,
+            "destination": 42,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 52,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 53,
+            "comment": "contains"
+        },
+        {
+            "origin": 4,
+            "destination": 54,
+            "comment": "contains"
+        },
+        {
+            "origin": 10,
+            "destination": 30,
+            "comment": "provides"
+        },
+        {
+            "origin": 10,
+            "destination": 31,
+            "comment": "provides"
+        },
+        {
+            "origin": 10,
+            "destination": 32,
+            "comment": "provides"
+        },
+        {
+            "origin": 10,
+            "destination": 33,
+            "comment": "provides"
+        },
+        {
+            "origin": 11,
+            "destination": 34,
+            "comment": "provides"
+        },
+        {
+            "origin": 12,
+            "destination": 35,
+            "comment": "provides"
+        },
+        {
+            "origin": 12,
+            "destination": 36,
+            "comment": "provides"
+        },
+        {
+            "origin": 14,
+            "destination": 37,
+            "comment": "provides"
+        },
+        {
+            "origin": 14,
+            "destination": 38,
+            "comment": "provides"
+        },
+        {
+            "origin": 15,
+            "destination": 43,
+            "comment": "provides"
+        },
+        {
+            "origin": 15,
+            "destination": 44,
+            "comment": "provides"
+        },
+        {
+            "origin": 15,
+            "destination": 45,
+            "comment": "provides"
+        },
+        {
+            "origin": 16,
+            "destination": 46,
+            "comment": "provides"
+        },
+        {
+            "origin": 16,
+            "destination": 47,
+            "comment": "provides"
+        },
+        {
+            "origin": 17,
+            "destination": 48,
+            "comment": "provides"
+        },
+        {
+            "origin": 17,
+            "destination": 49,
+            "comment": "provides"
+        },
+        {
+            "origin": 22,
+            "destination": 50,
+            "comment": "provides"
+        },
+        {
+            "origin": 22,
+            "destination": 51,
+            "comment": "provides"
+        },
+        {
+            "origin": 23,
+            "destination": 55,
+            "comment": "provides"
+        },
+        {
+            "origin": 23,
+            "destination": 56,
+            "comment": "provides"
+        },
+        {
+            "origin": 23,
+            "destination": 57,
+            "comment": "provides"
+        },
+        {
+            "origin": 23,
+            "destination": 58,
+            "comment": "provides"
+        },
+        {
+            "origin": 25,
+            "destination": 59,
+            "comment": "provides"
+        },
+        {
+            "origin": 25,
+            "destination": 60,
+            "comment": "provides"
+        },
+        {
+            "origin": 26,
+            "destination": 61,
+            "comment": "provides"
+        },
+        {
+            "origin": 26,
+            "destination": 62,
+            "comment": "provides"
+        },
+        {
+            "origin": 26,
+            "destination": 63,
+            "comment": "provides"
+        },
+        {
+            "origin": 27,
+            "destination": 64,
+            "comment": "provides"
+        },
+        {
+            "origin": 28,
+            "destination": 65,
+            "comment": "provides"
+        },
+        {
+            "origin": 29,
+            "destination": 66,
+            "comment": "provides"
+        },
+        {
+            "origin": 22,
+            "destination": 15,
+            "comment": "inherits"
+        },
+        {
+            "origin": 25,
+            "destination": 15,
+            "comment": "inherits"
+        },
+        {
+            "origin": 26,
+            "destination": 15,
+            "comment": "uses"
+        },
+        {
+            "origin": 26,
+            "destination": 27,
+            "comment": "uses"
+        },
+        {
+            "origin": 26,
+            "destination": 16,
+            "comment": "uses"
+        },
+        {
+            "origin": 26,
+            "destination": 18,
+            "comment": "uses"
+        },
+        {
+            "origin": 27,
+            "destination": 18,
+            "comment": "uses"
+        },
+        {
+            "origin": 27,
+            "destination": 12,
+            "comment": "uses"
+        },
+        {
+            "origin": 27,
+            "destination": 10,
+            "comment": "uses"
+        },
+        {
+            "origin": 27,
+            "destination": 11,
+            "comment": "uses"
+        },
+        {
+            "origin": 22,
+            "destination": 16,
+            "comment": "uses"
+        },
+        {
+            "origin": 22,
+            "destination": 18,
+            "comment": "uses"
+        },
+        {
+            "origin": 25,
+            "destination": 23,
+            "comment": "uses"
+        },
+        {
+            "origin": 25,
+            "destination": 24,
+            "comment": "uses"
+        },
+        {
+            "origin": 25,
+            "destination": 16,
+            "comment": "uses"
+        },
+        {
+            "origin": 25,
+            "destination": 17,
+            "comment": "uses"
+        },
+        {
+            "origin": 25,
+            "destination": 18,
+            "comment": "uses"
+        },
+        {
+            "origin": 28,
+            "destination": 12,
+            "comment": "uses"
+        },
+        {
+            "origin": 28,
+            "destination": 10,
+            "comment": "uses"
+        },
+        {
+            "origin": 14,
+            "destination": 12,
+            "comment": "uses"
+        },
+        {
+            "origin": 10,
+            "destination": 11,
+            "comment": "uses"
+        },
+        {
+            "origin": 12,
+            "destination": 10,
+            "comment": "uses"
+        },
+        {
+            "origin": 12,
+            "destination": 11,
+            "comment": "uses"
+        },
+        {
+            "origin": 29,
+            "destination": 12,
+            "comment": "uses"
+        },
+        {
+            "origin": 29,
+            "destination": 14,
+            "comment": "uses"
+        },
+        {
+            "origin": 29,
+            "destination": 13,
+            "comment": "uses"
+        },
+        {
+            "origin": 18,
+            "destination": 19,
+            "comment": "uses"
+        },
+        {
+            "origin": 18,
+            "destination": 20,
+            "comment": "uses"
+        },
+        {
+            "origin": 20,
+            "destination": 21,
+            "comment": "uses"
+        },
+        {
+            "origin": 19,
+            "destination": 21,
+            "comment": "uses"
+        }
+    ]
 }

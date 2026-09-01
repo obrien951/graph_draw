@@ -1,0 +1,14 @@
+./graph_agent.py \
+    --repo ~/code/str_tsne_rs \
+    --graph ~/code/str_tsne_rs/graphs/str_tsne_rs.planned.json \
+    --scope-config ~/code/str_tsne_rs/harness.scope.json \
+    --backend opencode \
+    --model "son-of-felnor/qwen3-coder-30b-q8xl" \
+    --review-model "son-of-felnor/qwen3-27b-q6" \
+    --agent build \
+    --context-chars 100000 \
+    --resume \
+    --fix-rounds 3 \
+    --double-check 2 \
+    --confirm-changes \
+    --stop-on-failure

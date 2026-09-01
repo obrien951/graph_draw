@@ -18,7 +18,37 @@ from typing import Sequence
 from .context import Section
 from .graphmodel import Graph, Node
 from .scope import Scope
-from .stubs import STUB_EXAMPLES, StubSite, marker_for
+from .stubs import PARTIAL_MARKER, STUB_EXAMPLES, StubSite, marker_for, partial_marker_for
+
+#: Per-language body an agent should leave behind when only PART of its own
+#: job is genuinely infeasible this turn — unlike HARNESS-STUB, this marks a
+#: gap in the node's OWN work, not a call to some other, unbuilt node.
+PARTIAL_EXAMPLES = {
+    "c++": (
+        "// HARNESS-PARTIAL(RustAnalyzer::analyze): crate dependency edges are not\n"
+        "// resolved here - that needs TomlDocument::parseText, a separate, not-yet-\n"
+        "// built node, and guessing its output shape here would commit to a contract\n"
+        "// it might not honour. Everything else below is real, tested and complete.\n"
+        "ir::Repo RustAnalyzer::analyze(const RepoFileIndex& index) const {\n"
+        "    ir::Repo repo = scanCratesAndModules(index);   // real work, done\n"
+        "    return repo;   // dependency edges intentionally left out - see marker above\n"
+        "}"
+    ),
+    "python": (
+        "def merge(curated, generated):\n"
+        "    # HARNESS-PARTIAL(GraphMerger::merge): only additive merging is done;\n"
+        "    # stale-node pruning needs a comparison this turn ran out of budget for.\n"
+        "    ...  # the real, working partial logic goes here, not a stub"
+    ),
+    "rust": (
+        "// HARNESS-PARTIAL(scan_rust_file): multi-line string literals inside a\n"
+        "// scanned file are not handled; the brace-depth scanner would need a\n"
+        "// dedicated string-aware pass this turn didn't have room for.\n"
+        "pub fn scan_rust_file(text: &str) -> RustFileItems {\n"
+        "    // real, working scan for everything except multi-line strings\n"
+        "}"
+    ),
+}
 
 MISSION = """\
 # Implement one graph node: {name}
@@ -111,11 +141,66 @@ SOLID
 DONE = """\
 ## Definition of done
 {items}
+
+{directive}
+"""
+
+ESCAPE_HATCH = """\
+## If part of this node is genuinely infeasible this turn
+This run allows a deliberate partial completion — but it is not a shortcut, and
+it is not for "this is hard" or "I am running low on turns." It is for a
+specific, nameable blocker: a dependency's real shape will only be known once
+its own (separate, not-yet-built) node exists, an external tool or file this
+needs is unavailable, or the specification itself conflicts with what is
+already on disk. If that happens:
+  - Implement everything you can for real — no throwing, no fake success.
+  - At the exact gap, leave a comment: `{partial_marker}: <one clear
+    sentence naming the specific blocker>`.
+  - Say so plainly in your summary.
+Do not use this to avoid finishing something merely tedious. A `{partial_marker}`
+marker left for a reason a reviewer would call flimsy is treated the same as
+leaving the node unimplemented.
+"""
+
+RESUME_PARTIAL = """\
+## This node already carries partial work from an earlier turn
+A previous attempt (this run or an earlier one) implemented part of this node
+for real and stopped at a declared blocker:
+  {partial_reason}
+Read what is already on disk before touching anything. If that blocker is now
+resolved (its dependency exists now, the missing tool is available, whatever
+it was), finish the job and remove the `{partial_marker}(...)` marker. If it
+is still blocked, leave the working part alone — do not rewrite it from
+scratch — and only touch what the blocker actually affects.
 """
 
 RETRY = """\
 ## This is a RETRY — the previous attempt was rejected
 {feedback}
+
+Make the fix now.
+"""
+
+FIX = """\
+# Fix a rejected change: {name}
+
+The change you just made in this same conversation was rejected:
+
+{problem}
+
+Fix exactly this. Keep everything else about what you already wrote — do not
+start over from scratch, and do not touch anything beyond what fixing this
+specific problem requires.
+
+Never run `rm`, `git clean`, or any other destructive command on `.harness/`
+or on anything outside the path you were told to work in — not even if
+`git status` shows it as untracked. Untracked is normal here; nothing in this
+build is committed yet, and `.harness/` is the build tool's own working
+directory, not part of your change. If a path shows up as forbidden, the fix
+is to stop writing to it or move that code into your own allowed paths — it
+is never to delete it.
+
+Fix it now.
 """
 
 CONTEXT_POINTER = """\
@@ -123,13 +208,85 @@ CONTEXT_POINTER = """\
 The repository context for this task — layout, existing symbols, the relevant
 file bodies and the plan excerpt — is in `{path}`.
 READ THAT FILE FIRST. It exists so that you reuse what is already there.
+
+Write the changes now.
+"""
+
+NOOP_CHECK = """\
+# Before implementing — is this node's job already done?
+
+Node: {name} ({kind})
+Specification: {description}
+
+Read the current code in the allowed paths below and answer one question: does
+the codebase ALREADY do everything this specification asks for, such that
+writing anything here would be pure duplication?
+
+This is almost always NO. Answer NOOP only when you can point at the exact
+existing function/method that already does the full job — not "something
+similar exists," not "most of it is covered," not "a helper could easily be
+adapted." A `HARNESS-STUB(<name>)` marker, a body that throws / returns a
+placeholder / calls `Q_UNIMPLEMENTED()`, or any TODO left in the node's own
+code is NEVER a no-op, by definition — that IS the unimplemented work this
+node exists to do. Do not confuse "a reference implementation exists in
+.salvage/" with "this is already done" either: salvage material is explicitly
+unverified and untrusted until a node's own agent turn adapts it for real.
+
+Do not edit, create or delete any file. This is a read-only check.
+
+## Allowed paths (for reference only — do not write to them here)
+{fence}
+
+Answer in exactly this form:
+
+VERDICT: NOOP
+EVIDENCE: <the exact file:line or function name that already does this, and how>
+or
+VERDICT: IMPLEMENT
+
+Answer now.
+"""
+
+DOUBLE_CHECK = """\
+# Double-check one graph node's implementation: {name}
+
+Determine the correctness of the implementation of: {description}
+
+...and rectify any discrepancies between the implementation and the
+specification above. Re-read the files you are responsible for — do not trust
+your memory of the previous turn — check each requirement against what is
+actually on disk, and fix anything that has drifted. If the implementation
+already matches the specification, make no changes and say so; do not invent
+extra work.
+
+A `HARNESS-STUB(<name>)` marker left in place is NOT a discrepancy to fix. It
+is a deliberate placeholder for a dependency that is a separate node elsewhere
+in the graph, built in its own dedicated turn later. Filling it in here does
+that other node's job out of turn and the two passes can end up in conflict.
+Only correct what THIS node's own description above promised.
+
+## Scope fence — unchanged from the implementation pass
+{fence}
+Anything you change outside the allowed paths is reverted automatically.
+
+## Still true
+{items}
+
+Fix it now.
 """
 
 REVIEW = """\
 # Review one node's implementation
 
+This codebase is built one graph node per turn, not one file or one class per
+turn: a Class node's own diff may legitimately leave ONE OF ITS OWN METHODS
+still throwing/unimplemented behind a `HARNESS-STUB(<name>)` marker, because
+that method's body is a SEPARATE Function node elsewhere in the graph, given
+to a different agent in its own dedicated turn. That is correct structure, not
+an incomplete implementation — do not flag it as missing work.
+
 A single graph node was just implemented by another agent. Judge the diff below
-on four things only, in this order:
+on five things only, in this order:
 
 1. SCOPE — does the diff do exactly this node's job and nothing else? Work
    belonging to another node, opportunistic refactors, unrelated renames and
@@ -138,9 +295,17 @@ on four things only, in this order:
    this repository? Name the existing thing it should have called.
 3. SOLID — single responsibility, honest interfaces, dependencies on
    abstractions rather than concretions, no strengthened preconditions.
-4. UNFILLED CALLS — dependencies that do not exist yet must be declared and left
-   unfilled with a `HARNESS-STUB(<name>)` marker. They must not be quietly
-   implemented, and they must not be silently dropped.
+4. UNFILLED CALLS — a dependency that does not exist yet must be declared and
+   left unfilled with a `HARNESS-STUB(<name>)` marker (see above — this is
+   normal, not a defect). It must not be quietly implemented, and it must not
+   be silently dropped.
+5. DECLARED PARTIAL WORK — a `HARNESS-PARTIAL(<name>): <reason>` marker is this
+   node's own agent honestly saying "everything else here is real and tested;
+   this specific, named piece is not, and here is why." Accept it exactly like
+   an unfilled dependency (#4) PROVIDED the reason is a real, specific blocker
+   (a genuinely unavailable dependency, tool, or file) — REVISE only if the
+   reason is vague, unconvincing, or reads like an excuse to skip tedious work
+   that was actually feasible.
 
 Do NOT ask for extra features, extra tests beyond the node's description, or
 stylistic rewrites. Missing polish is not a failure; scope creep is.
@@ -166,6 +331,8 @@ or
 VERDICT: REVISE
 FINDINGS:
 - <one line per problem, naming the file and what to do instead>
+
+File the review now.
 """
 
 
@@ -216,6 +383,8 @@ class PromptBuilder:
         verify_cmds: Sequence[str] = (),
         feedback: str = "",
         order_note: str = "",
+        allow_partial: bool = False,
+        existing_partial: str | None = None,
     ) -> Brief:
         deps = self.graph.dependencies(node.index)
         existing = [d for d in deps if d.implemented]
@@ -230,6 +399,11 @@ class PromptBuilder:
             description=_indent(node.comment),
             order_note=f" {order_note}" if order_note else "",
         )]
+
+        if existing_partial:
+            parts.append(RESUME_PARTIAL.format(
+                partial_reason=existing_partial, partial_marker=PARTIAL_MARKER,
+            ))
 
         parts.append(DEPENDENCIES.format(
             existing=_bullets([f"{d.name} ({d.kind}): {_one_line(d.comment)}" for d in existing]),
@@ -251,7 +425,13 @@ class PromptBuilder:
         parts.append(FENCE.format(fence=scope.describe()))
         parts.append(DRY_SOLID_RULES)
 
-        items = ["The node's description is fully implemented — no part deferred."]
+        if allow_partial:
+            parts.append(ESCAPE_HATCH.format(partial_marker=PARTIAL_MARKER))
+
+        items = ["The node's description is fully implemented — no part deferred."
+                 if not allow_partial else
+                 "The node's description is fully implemented, or the one part that "
+                 "genuinely is not carries a HARNESS-PARTIAL marker naming why."]
         if missing:
             items.append("Every not-yet-built dependency is declared and left unfilled with its marker.")
         items.append("The project still builds; nothing that worked before is broken.")
@@ -261,13 +441,35 @@ class PromptBuilder:
             "You finish with a short summary: files touched, interfaces you committed to, "
             "stubs you left, and anything the graph itself got wrong."
         )
-        parts.append(DONE.format(items=_bullets(items)))
+        parts.append(DONE.format(items=_bullets(items), directive="Write the changes now."))
 
         if feedback:
             parts.append(RETRY.format(feedback=feedback.strip()))
 
         context = "\n".join(s.render() for s in sections)
         return Brief(node=node, core="\n".join(parts), context=context)
+
+    def fix_prompt(self, node: Node, problem: str) -> str:
+        return FIX.format(name=node.name, problem=problem.strip())
+
+    def noop_check_prompt(self, node: Node, scope: Scope) -> str:
+        return NOOP_CHECK.format(
+            name=node.name, kind=node.kind,
+            description=_indent(node.comment),
+            fence=_indent(scope.describe()),
+        )
+
+    def double_check_prompt(self, node: Node, scope: Scope, verify_cmds: Sequence[str] = ()) -> str:
+        items = ["The node's description is fully implemented — no part deferred.",
+                 "The project still builds; nothing that worked before is broken."]
+        if verify_cmds:
+            items.append("These commands pass: " + "; ".join(verify_cmds))
+        return DOUBLE_CHECK.format(
+            name=node.name,
+            description=_indent(node.comment),
+            fence=_indent(scope.describe()),
+            items=_bullets(items),
+        )
 
     def review_prompt(self, node: Node, scope: Scope, diff: str) -> str:
         return REVIEW.format(
@@ -277,6 +479,30 @@ class PromptBuilder:
             fence=_indent(scope.describe()),
             diff=diff,
         )
+
+
+def parse_noop_verdict(text: str) -> tuple[bool, str]:
+    """(is_noop, evidence) from a no-op-check reply.
+
+    Unlike parse_review, this fails CLOSED: an unparseable, ambiguous, or
+    missing verdict means "implement it" (is_noop=False), never "skip it".
+    Silently skipping real work on a garbled response would be exactly the
+    false-completion failure mode this whole harness exists to prevent.
+    """
+    idx = text.upper().rfind("VERDICT:")
+    if idx < 0:
+        return False, ""
+    tail = text[idx:]
+    first_line = tail.splitlines()[0].upper()
+    if "NOOP" not in first_line:
+        return False, ""
+    evidence = ""
+    for line in tail.splitlines()[1:]:
+        stripped = line.strip()
+        if stripped.upper().startswith("EVIDENCE:"):
+            evidence = stripped.split(":", 1)[1].strip()
+            break
+    return True, evidence or "(no evidence given)"
 
 
 def parse_review(text: str) -> tuple[bool, list[str]]:

@@ -36,6 +36,16 @@ DEFAULT_OPENCODE_BIN = str(Path.home() / ".opencode" / "bin" / "opencode")
 DEFAULT_SERVER_URL = "http://127.0.0.1:8080/v1"
 
 
+def _decode(data) -> str:
+    """subprocess.TimeoutExpired.stdout/.stderr come back as bytes even under
+    text=True — a CPython quirk on that exception path specifically."""
+    if not data:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "replace")
+    return data
+
+
 @dataclass
 class AgentSpec:
     """Everything the caller chose about *which* agent runs."""
@@ -72,6 +82,7 @@ class RunRequest:
     log_path: Path | None = None
     system: str | None = None
     writes_files: bool = True      # False for review-only calls
+    continue_session: bool = False  # follow up in the same session, not a fresh one
 
 
 @dataclass
@@ -90,6 +101,9 @@ class Backend(ABC):
     agentic = True
     #: False for backends that only inspect (dry runs, reviewers).
     mutates = True
+    #: True when RunRequest.continue_session means something to this backend
+    #: (a real, resumable conversation) rather than being silently ignored.
+    supports_continue = False
 
     def __init__(self, spec: AgentSpec):
         self.spec = spec
@@ -108,14 +122,20 @@ class Backend(ABC):
     def _log(request: RunRequest, text: str) -> None:
         if request.log_path:
             request.log_path.parent.mkdir(parents=True, exist_ok=True)
-            with request.log_path.open("a", encoding="utf-8") as fh:
+            # Each attempt already gets its own numbered log path, so append
+            # mode only served to glue a stale run's log onto today's - e.g. a
+            # leftover llama-cli invocation line ahead of the real opencode one.
+            mode = "a" if getattr(request, "_log_opened", False) else "w"
+            with request.log_path.open(mode, encoding="utf-8") as fh:
                 fh.write(text)
+            request._log_opened = True
 
 
 class OpencodeBackend(Backend):
     """`opencode run` — an agentic CLI that edits the repository itself."""
 
     agentic = True
+    supports_continue = True
 
     def __init__(self, spec: AgentSpec):
         super().__init__(spec)
@@ -127,6 +147,12 @@ class OpencodeBackend(Backend):
 
     def _argv(self, request: RunRequest) -> list[str]:
         argv = [self.binary, "run", "--dir", str(request.cwd)]
+        # -c resumes opencode's own "last session" for this directory rather
+        # than starting a fresh one, so a follow-up prompt lands in the SAME
+        # conversation as the attempt it is checking on, not a blank context
+        # that has to be told everything again.
+        if request.continue_session:
+            argv.append("-c")
         if self.spec.model:
             argv += ["-m", self.spec.model]
         if self.spec.agent:
@@ -147,7 +173,17 @@ class OpencodeBackend(Backend):
                 argv, cwd=str(request.cwd), capture_output=True, text=True,
                 timeout=self.spec.timeout,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            # subprocess still captures whatever the child had written to its
+            # pipes before the kill (as bytes even though text=True — a CPython
+            # quirk on this exception path), which is otherwise the only
+            # record of what the agent was doing when it got killed. Without
+            # this, a timeout leaves a completely empty log: no way to tell a
+            # stuck compression/summarization loop from a slow-but-progressing
+            # turn from a genuine hang.
+            partial = _decode(exc.stdout) + _decode(exc.stderr)
+            if partial:
+                self._log(request, partial)
             return RunResult(False, error=f"opencode timed out after {self.spec.timeout}s", exit_code=124)
         except OSError as exc:
             return RunResult(False, error=f"cannot run opencode: {exc}", exit_code=127)
@@ -261,7 +297,10 @@ class LlamaCliBackend(TextBackend):
         self._log(request, f"$ {' '.join(argv)}\n\n")
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=self.spec.timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            partial = _decode(exc.stdout) + _decode(exc.stderr)
+            if partial:
+                self._log(request, partial)
             return RunResult(False, error=f"llama-cli timed out after {self.spec.timeout}s", exit_code=124)
         except OSError as exc:
             return RunResult(False, error=f"cannot run llama-cli: {exc}", exit_code=127)

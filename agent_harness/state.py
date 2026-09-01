@@ -6,7 +6,9 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-PENDING, RUNNING, DONE, FAILED, SKIPPED = "pending", "running", "done", "failed", "skipped"
+PENDING, RUNNING, DONE, FAILED, SKIPPED, PARTIAL, NOOP = (
+    "pending", "running", "done", "failed", "skipped", "partial", "noop"
+)
 
 
 @dataclass
@@ -18,10 +20,12 @@ class NodeState:
     changed: list[str] = field(default_factory=list)
     violations: list[str] = field(default_factory=list)
     note: str = ""
+    reason: str = ""         # the named ground a failed attempt was refused on (runner.REASON_*)
     seconds: float = 0.0
     finished_at: str = ""
     verified: bool = False   # the build/test gate actually ran and passed
     reviewed: bool = False   # a review agent actually read the diff
+    double_checked: int = 0  # self-correction rounds run after the gate first passed
 
 
 class RunState:

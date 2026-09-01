@@ -15,8 +15,12 @@ add_executable(graph_draw_tests
     test_repoanalyzer.cpp
     test_sourcetext.cpp
     test_repofileindex.cpp
+    test_labelresolver.cpp
     test_graphbuilder.cpp
     test_cppanalyzer.cpp
+    test_rustanalyzer.cpp
+    test_cargotoml.cpp
+    test_rustlexer.cpp
 )
 
 target_link_libraries(graph_draw_tests PRIVATE
@@ -24,6 +28,7 @@ target_link_libraries(graph_draw_tests PRIVATE
     graph_io
     graph_analyze
     graph_lang
+    graph_lang_rust
     Catch2::Catch2WithMain
     Qt${QT_VERSION_MAJOR}::Widgets
 )

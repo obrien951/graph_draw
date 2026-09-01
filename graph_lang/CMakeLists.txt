@@ -6,6 +6,7 @@
 add_library(graph_lang STATIC
     sourcetext.cpp        sourcetext.h
     repofileindex.cpp     repofileindex.h
+    labelresolver.cpp     labelresolver.h
     languageanalyzer.cpp  languageanalyzer.h
     ir/ir.cpp             ir/ir.h
 )
