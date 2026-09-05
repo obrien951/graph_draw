@@ -66,11 +66,18 @@ class Section:
 class RepoContext:
     """Reads the working tree and assembles per-node context sections."""
 
-    def __init__(self, root: str | Path, ignore: Sequence[str] = (), budget: Budget | None = None):
+    def __init__(self, root: str | Path, ignore: Sequence[str] = (), budget: Budget | None = None,
+                 language: str | None = None):
         self.root = Path(root).resolve()
         self.ignore = tuple(ignore)
         self.budget = budget or Budget()
         self._files: list[str] | None = None
+        # Suffixes worth pulling in as a neighbour's context. Historically a
+        # fixed C++/Rust/Python set; now widened by the target language so a
+        # TypeScript node sees .ts neighbours and a Rust node sees Cargo.toml.
+        from . import languages
+        base = (".h", ".hpp", ".hh", ".cpp", ".cxx", ".cc", ".c", ".txt", ".rs", ".py")
+        self.neighbour_suffixes = tuple(dict.fromkeys(base + languages.get(language).source_suffixes))
 
     # ------------------------------------------------------------ file lists
     def files(self) -> list[str]:
@@ -196,7 +203,8 @@ class RepoContext:
         return text[begin:end].strip()
 
     # ------------------------------------------------------------- assembling
-    def node_paths(self, graph: Graph, node: Node, allow: Sequence[str]) -> list[str]:
+    def node_paths(self, graph: Graph, node: Node, allow: Sequence[str],
+                   dir_of=None) -> list[str]:
         """Existing files worth showing: the node's own scope, then its
         implemented dependencies' and dependents' modules.
 
@@ -221,9 +229,14 @@ class RepoContext:
             module = other if other.kind == "Module" else graph.owner_module(other.index)
             if module is None:
                 continue
+            # A module's name is not always its directory: in a Rust crate the
+            # `sentiment` module lives in `src/sentiment/`. dir_of (the scope
+            # resolver's mapping) gives the real path; fall back to the name
+            # for the flat layout graph_draw's own Part B uses.
+            mdir = (dir_of(module) if dir_of else None) or module.name
             related += [
-                f for f in self.matching([f"{module.name}/**"])
-                if Path(f).suffix in (".h", ".hpp", ".cpp", ".txt", ".rs", ".py")
+                f for f in self.matching([f"{mdir}/**"])
+                if Path(f).suffix in self.neighbour_suffixes
             ]
         # related goes first: it is the harder-won, more specifically relevant
         # signal (an actual dependency, possibly in another module entirely),
@@ -240,6 +253,7 @@ class RepoContext:
         allow: Sequence[str],
         extra_files: Sequence[str] = (),
         plan_path: str | Path | None = None,
+        dir_of=None,
     ) -> list[Section]:
         sections: list[Section] = [self.tree_section(), self.symbol_section()]
         plan = self.plan_section(plan_path, node)
@@ -249,7 +263,7 @@ class RepoContext:
         if forced:
             sections.append(forced)
         near = self.files_section(
-            [p for p in self.node_paths(graph, node, allow) if p not in set(extra_files)],
+            [p for p in self.node_paths(graph, node, allow, dir_of=dir_of) if p not in set(extra_files)],
             "Code near this node (its module and its implemented neighbours)",
         )
         if near:

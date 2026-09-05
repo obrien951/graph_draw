@@ -79,6 +79,67 @@ Two mechanisms rather than one instruction:
   context to `.harness/work/<node>/context.md`, which the brief tells the agent
   to read first.
 
+## Language
+
+The graph, the fence and the walk are language-neutral; a handful of brief
+details are not. Those live in `languages.py`, keyed by a short id
+(`rust`, `c++`, `python`, `typescript`):
+
+* the `HARNESS-STUB` / `HARNESS-PARTIAL` example shown in the brief
+  (`unimplemented!(...)` for Rust, `Q_UNIMPLEMENTED()` for C++, `raise
+  NotImplementedError` for Python),
+* the "a body that …" wording in the no-op check,
+* the build-artefact globs unioned into the ignore list so `target/`,
+  `node_modules/` etc. never look like agent output or trip the fence,
+* the verify commands the CLI suggests when none are configured,
+* which source suffixes count as a neighbour's context.
+
+Resolution order: `--language` → the scope config's `"language"` key →
+autodetection from the repo's marker files (`Cargo.toml` → rust,
+`CMakeLists.txt` → c++, `pyproject.toml` → python, …) → `c++` as the historical
+default. The run header prints which one won and how.
+
+```jsonc
+// sentiment_aggregator.scope.json
+{
+  "language": "rust",
+  ...
+}
+```
+
+## Published reference data — fetch, don't reconstruct
+
+A small local model asked to implement a node whose spec names a *published*
+artefact — the VADER lexicon, the Loughran–McDonald word lists, an ISO table, a
+stopword list — tends to write it out from training memory. The result looks
+right and is quietly wrong: invented scores, missing entries.
+
+Two mechanisms push back:
+
+1. **The brief says so.** When a node's description mentions a known dataset
+   kind (or the config lists resources), the brief carries a "fetch it, do not
+   reconstruct it from memory" rule, and the review pass gets a sixth check
+   that rejects a hand-authored table standing in for a real file.
+2. **`reference_resources` in the scope config** names the real artefacts:
+
+   ```jsonc
+   "reference_resources": [
+     {
+       "name": "VADER lexicon",
+       "url":  "https://raw.githubusercontent.com/cjhutto/vaderSentiment/master/vaderSentiment/vader_lexicon.txt",
+       "path": "src/sentiment/data/vader_lexicon.txt",
+       "note": "tab-separated: token<TAB>mean<TAB>std<TAB>[raw ratings]",
+       "modules": ["sentiment"]
+     }
+   ]
+   ```
+
+   Each entry is listed in the brief of every node it applies to (omit
+   `modules` for all). With `--fetch-refs` the harness downloads any entry that
+   has a URL and isn't already on disk into `<state-dir>/refs/` and hands the
+   node the local path. It fails open: an unreachable resource just stays a URL
+   in the brief. A module entry may carry its own `reference_resources` list.
+
 ## Backends
 
 | `--backend` | what it is | how work lands |
@@ -326,6 +387,8 @@ exercised for real rather than mocked.
 |---|---|
 | `graph_agent.py` | thin entry point, nothing else |
 | `graphmodel.py` | the graph, dependency queries, walk order |
+| `languages.py` | per-language brief details + repo autodetection |
+| `references.py` | published reference resources: config parsing, `--fetch-refs` |
 | `scope.py` | the fence: policy, resolution, audit |
 | `workspace.py` | git snapshot, change detection, revert, commit |
 | `context.py` | repo tree, symbol index, file bodies, plan excerpt |

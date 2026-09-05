@@ -107,6 +107,11 @@ class ScopeConfig:
     nodes: dict = field(default_factory=dict)
     context_files: tuple[str, ...] = ()
     verify: tuple[str, ...] = ()
+    #: "rust" | "c++" | "python" | ...  — overridden by --language, and only
+    #: consulted when neither --language nor repo autodetection settled it.
+    language: str | None = None
+    #: published datasets a node's spec depends on; see references.py
+    reference_resources: tuple[dict, ...] = ()
 
     @classmethod
     def load(cls, path: str | Path | None) -> "ScopeConfig":
@@ -133,6 +138,8 @@ class ScopeConfig:
             nodes=dict(data.get("nodes", {})),
             context_files=tuple(data.get("context_files", ())),
             verify=tuple(data.get("verify", ())),
+            language=data.get("language"),
+            reference_resources=tuple(data.get("reference_resources", ())),
         )
 
 

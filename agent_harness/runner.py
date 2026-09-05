@@ -646,6 +646,7 @@ class Harness:
             self.graph, node, scope.allow,
             extra_files=self._existing(self.options.extra_context),
             plan_path=self.options.plan_path,
+            dir_of=lambda n: self.scopes.resolve(n).module_dir,
         )
         return self.prompts.build(
             node, scope, sections,

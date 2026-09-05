@@ -9,10 +9,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
+from . import languages
 from .backends import BACKENDS, DEFAULT_SERVER_URL, DRY_RUN, OPENCODE, AgentSpec, build_backend
 from .context import Budget, RepoContext
 from .graphmodel import LEAF_FIRST, ORDERS, ROOT_FIRST, Graph, GraphError
 from .prompts import PromptBuilder
+from .references import ReferenceResource, fetch as fetch_references, parse_all
 from .review import Reviewer
 from .runner import VIOLATION_POLICIES, Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
 from .scope import ScopeConfig, ScopeResolver
@@ -68,6 +70,17 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--scope-config", help="JSON scope/fence policy (see harness.scope.json)")
     g.add_argument("--plan-file", help="markdown plan; the task id in a node's comment is "
                                        "extracted from it into the prompt")
+    g.add_argument("--language", metavar="LANG",
+                   help="target language for the briefs (rust, c++, python, typescript). "
+                        "Sets the HARNESS-STUB / HARNESS-PARTIAL example, the no-op-check "
+                        "wording and the build-artefact ignore globs. Default: the scope "
+                        "config's \"language\", else autodetected from the repo "
+                        "(Cargo.toml -> rust, CMakeLists.txt -> c++, ...), else c++.")
+    g.add_argument("--fetch-refs", action="store_true",
+                   help="before the walk, download every reference_resources entry that has "
+                        "a URL and isn't already on disk into <state-dir>/refs/, and hand "
+                        "each node the local path instead of only the URL. Fails open: an "
+                        "unreachable resource just stays a URL in the brief.")
 
     s = p.add_argument_group("selection")
     s.add_argument("--only", action="append", default=[], metavar="NAME",
@@ -282,6 +295,18 @@ def _run_steps(label: str, commands, cwd) -> int:
     return 0
 
 
+def _reference_resources(config: ScopeConfig) -> list[ReferenceResource]:
+    """The top-level reference_resources plus any declared inside a module
+    entry (those default their `modules` to that one module)."""
+    raw = list(config.reference_resources)
+    for name, entry in config.modules.items():
+        for item in entry.get("reference_resources", []) if isinstance(entry, dict) else []:
+            item = dict(item)
+            item.setdefault("modules", [name])
+            raw.append(item)
+    return list(parse_all(raw))
+
+
 def _review_spec(args) -> AgentSpec | None:
     """Review defaults to the SAME backend/model/agent as the build pass — a
     node reviewing its own diff — unless --review-* overrides it or
@@ -320,15 +345,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         # in the config, so a contract can be locked the moment it lands.
         config = replace(config, deny=tuple(config.deny) + tuple(args.freeze))
 
+    if args.language and not languages.known(args.language):
+        print(f"error: unknown --language {args.language!r}; known: "
+              f"{', '.join(languages.choices())}", file=sys.stderr)
+        return 2
+    language_id = languages.resolve(args.language, config.language, root)
+    language = languages.get(language_id)
+    # Union the language's build-artefact globs into ignore so `target/`,
+    # `node_modules/` etc. never look like agent output and never trip the
+    # fence. DEFAULT_IGNORE (C++/CMake) is already unioned in by ScopeConfig.
+    config = replace(config, ignore=tuple(dict.fromkeys(list(config.ignore) + list(language.ignore))))
+
+    reference_resources = _reference_resources(config)
+
     update_graph = not args.no_update_graph
     previewing = args.plan_only or args.backend == DRY_RUN
     if update_graph and not verify_cmds and not args.allow_unverified_graph and not previewing:
+        hint = "\n".join(f"         --verify-cmd '{c}'" for c in
+                         (language.verify_hint or ("<build>", "<test>")))
         print("error: refusing to write implemented=true with nothing verifying it.\n"
               "       The 2026-08-19 run marked 39 nodes done without ever compiling; the\n"
               "       flags were false and the tree did not build.\n"
-              "       Give it a gate, e.g.:\n"
-              "         --verify-cmd 'cmake --build build -j4'\n"
-              "         --verify-cmd 'cd build && QT_QPA_PLATFORM=offscreen ctest'\n"
+              f"       Give it a gate, e.g. (for {language_id}):\n"
+              f"{hint}\n"
               "       or pass --no-update-graph, or override with --allow-unverified-graph.",
               file=sys.stderr)
         return 2
@@ -350,8 +389,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     order, cyclic = graph.order(args.order)
     selection = _selected(graph, args, order, state)
 
+    detected = languages.detect(root)
+    lang_src = ("--language" if args.language else
+                "scope config" if config.language else
+                f"autodetected ({detected})" if detected else "default")
     print(f"graph : {args.graph} — {graph.summary()}")
     print(f"repo  : {root}")
+    print(f"lang  : {language_id} ({lang_src})")
+    if reference_resources:
+        print(f"refs  : {len(reference_resources)} reference resource(s)"
+              f"{' — fetching' if args.fetch_refs else ''}")
     print(f"order : {args.order} ({len(selection)} node(s) selected)")
     if cyclic:
         print(f"warning: {len(cyclic)} node(s) sit in a dependency cycle and were appended last: "
@@ -371,7 +418,8 @@ def main(argv: Sequence[str] | None = None) -> int:
               "with --skip.", file=sys.stderr)
         return 2
 
-    context = RepoContext(root, ignore=config.ignore, budget=Budget(total_chars=args.context_chars))
+    context = RepoContext(root, ignore=config.ignore, budget=Budget(total_chars=args.context_chars),
+                          language=language_id)
     if args.context_glob:
         context_files += context.matching(args.context_glob)
 
@@ -410,7 +458,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
 
-    prompts = PromptBuilder(graph)
+    if reference_resources and args.fetch_refs and not previewing:
+        # Downloads to <state-dir>/refs/; each node's brief then names the local
+        # path (references.ReferenceResource.describe) so the agent reads the
+        # real file instead of the URL. Fails open — an unreachable resource
+        # stays a URL in the brief and the run continues.
+        reference_resources = fetch_references(
+            reference_resources, root, state_dir / "refs", log=print)
+
+    prompts = PromptBuilder(graph, language_hint=language_id,
+                            reference_resources=reference_resources)
     harness = Harness(
         graph=graph, root=root, backend=backend,
         scopes=scopes, context=context, prompts=prompts,
@@ -441,6 +498,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                   "strong_agent": strong_backend.describe() if strong_backend else None,
                   "review": review_backend.describe() if review_backend else None,
                   "review_required": bool(args.require_review),
+                  "language": language_id,
+                  "reference_resources": [r.name for r in reference_resources],
                   "verify": list(verify_cmds)}
     state.save()
 

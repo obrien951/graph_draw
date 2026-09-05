@@ -15,40 +15,12 @@ import textwrap
 from dataclasses import dataclass
 from typing import Sequence
 
+from . import languages
 from .context import Section
 from .graphmodel import Graph, Node
+from .references import ReferenceResource, for_module
 from .scope import Scope
-from .stubs import PARTIAL_MARKER, STUB_EXAMPLES, StubSite, marker_for, partial_marker_for
-
-#: Per-language body an agent should leave behind when only PART of its own
-#: job is genuinely infeasible this turn — unlike HARNESS-STUB, this marks a
-#: gap in the node's OWN work, not a call to some other, unbuilt node.
-PARTIAL_EXAMPLES = {
-    "c++": (
-        "// HARNESS-PARTIAL(RustAnalyzer::analyze): crate dependency edges are not\n"
-        "// resolved here - that needs TomlDocument::parseText, a separate, not-yet-\n"
-        "// built node, and guessing its output shape here would commit to a contract\n"
-        "// it might not honour. Everything else below is real, tested and complete.\n"
-        "ir::Repo RustAnalyzer::analyze(const RepoFileIndex& index) const {\n"
-        "    ir::Repo repo = scanCratesAndModules(index);   // real work, done\n"
-        "    return repo;   // dependency edges intentionally left out - see marker above\n"
-        "}"
-    ),
-    "python": (
-        "def merge(curated, generated):\n"
-        "    # HARNESS-PARTIAL(GraphMerger::merge): only additive merging is done;\n"
-        "    # stale-node pruning needs a comparison this turn ran out of budget for.\n"
-        "    ...  # the real, working partial logic goes here, not a stub"
-    ),
-    "rust": (
-        "// HARNESS-PARTIAL(scan_rust_file): multi-line string literals inside a\n"
-        "// scanned file are not handled; the brace-depth scanner would need a\n"
-        "// dedicated string-aware pass this turn didn't have room for.\n"
-        "pub fn scan_rust_file(text: &str) -> RustFileItems {\n"
-        "    // real, working scan for everything except multi-line strings\n"
-        "}"
-    ),
-}
+from .stubs import PARTIAL_MARKER, StubSite, marker_for, partial_marker_for
 
 MISSION = """\
 # Implement one graph node: {name}
@@ -138,6 +110,37 @@ SOLID
     across modules.
 """
 
+REFERENCE_DATA_RULE = """\
+## Published reference data — fetch it, do not reconstruct it from memory
+If this node's specification names a *published* external artefact — a
+sentiment or financial word list (VADER, Loughran-McDonald), a stopword list,
+an ISO/Unicode table, a country/currency/exchange mapping, an RFC grammar, a
+standard test corpus — you must load the *real* data, not a version you write
+out from your own training knowledge.
+
+A hand-authored table that approximates a public dataset is a correctness
+defect: the values are subtly wrong, entries are missing, and nothing downstream
+can be trusted. The review pass rejects it.
+
+Do this instead, in order of preference:
+  1. If a real copy is on disk (see the list below, or the paths the spec
+     names), load it from there.
+  2. If you have a web-search or fetch tool, download the genuine file from its
+     authoritative source and commit it (or a documented, deterministic sample
+     of it) at the path the code loads from.
+  3. If you can do neither and the spec only needs a *small bundled seed*,
+     derive that seed by sampling the real file — and leave a
+     `{partial_marker}` marker naming the full file you could not fetch, so a
+     later pass finishes it. Do NOT invent the entries.
+"""
+
+REFERENCE_DATA_LIST = """\
+### Reference resources for this node
+These are the real artefacts this node's specification depends on. Use them
+instead of reconstructing the data:
+{resources}
+"""
+
 DONE = """\
 ## Definition of done
 {items}
@@ -160,6 +163,11 @@ already on disk. If that happens:
 Do not use this to avoid finishing something merely tedious. A `{partial_marker}`
 marker left for a reason a reviewer would call flimsy is treated the same as
 leaving the node unimplemented.
+
+Shape of a declared partial:
+```
+{partial_example}
+```
 """
 
 RESUME_PARTIAL = """\
@@ -225,8 +233,8 @@ writing anything here would be pure duplication?
 This is almost always NO. Answer NOOP only when you can point at the exact
 existing function/method that already does the full job — not "something
 similar exists," not "most of it is covered," not "a helper could easily be
-adapted." A `HARNESS-STUB(<name>)` marker, a body that throws / returns a
-placeholder / calls `Q_UNIMPLEMENTED()`, or any TODO left in the node's own
+adapted." A `HARNESS-STUB(<name>)` marker, a body that {unfinished_phrase},
+or any TODO left in the node's own
 code is NEVER a no-op, by definition — that IS the unimplemented work this
 node exists to do. Do not confuse "a reference implementation exists in
 .salvage/" with "this is already done" either: salvage material is explicitly
@@ -286,7 +294,7 @@ to a different agent in its own dedicated turn. That is correct structure, not
 an incomplete implementation — do not flag it as missing work.
 
 A single graph node was just implemented by another agent. Judge the diff below
-on five things only, in this order:
+on six things only, in this order:
 
 1. SCOPE — does the diff do exactly this node's job and nothing else? Work
    belonging to another node, opportunistic refactors, unrelated renames and
@@ -306,6 +314,13 @@ on five things only, in this order:
    (a genuinely unavailable dependency, tool, or file) — REVISE only if the
    reason is vague, unconvincing, or reads like an excuse to skip tedious work
    that was actually feasible.
+6. RECONSTRUCTED REFERENCE DATA — if the node's description names a *published*
+   dataset, dictionary, standard table or word list and the diff contains a
+   large hand-authored table approximating it (invented sentiment scores, a
+   half-remembered category list) rather than code that loads the real file, or
+   a small sample explicitly derived from it, REVISE and say the real source
+   should have been fetched. A genuine file committed at the load path, or a
+   `HARNESS-PARTIAL` marker naming the file that could not be fetched, is fine.
 
 Do NOT ask for extra features, extra tests beyond the node's description, or
 stylistic rewrites. Missing polish is not a failure; scope creep is.
@@ -370,9 +385,12 @@ def _one_line(text: str, limit: int = 220) -> str:
 class PromptBuilder:
     """Builds the node brief and the review prompt."""
 
-    def __init__(self, graph: Graph, language_hint: str = "c++"):
+    def __init__(self, graph: Graph, language_hint: str = "c++",
+                 reference_resources: Sequence[ReferenceResource] = ()):
         self.graph = graph
         self.language_hint = language_hint
+        self.language = languages.get(language_hint)
+        self.reference_resources = tuple(reference_resources)
 
     def build(
         self,
@@ -412,7 +430,7 @@ class PromptBuilder:
                 for d in missing
             ]),
             marker_shape=marker_for("<node name>"),
-            stub_example=STUB_EXAMPLES.get(self.language_hint, STUB_EXAMPLES["c++"]),
+            stub_example=self.language.stub_example,
             callers=_bullets([f"{c.name} ({c.kind}): {_one_line(c.comment)}" for c in callers]),
         ))
 
@@ -425,8 +443,19 @@ class PromptBuilder:
         parts.append(FENCE.format(fence=scope.describe()))
         parts.append(DRY_SOLID_RULES)
 
+        node_refs = for_module(self.reference_resources, scope.module)
+        if node_refs or self._spec_names_a_dataset(node):
+            parts.append(REFERENCE_DATA_RULE.format(partial_marker=partial_marker_for(node.name)))
+        if node_refs:
+            parts.append(REFERENCE_DATA_LIST.format(
+                resources="\n".join(r.describe() for r in node_refs),
+            ))
+
         if allow_partial:
-            parts.append(ESCAPE_HATCH.format(partial_marker=PARTIAL_MARKER))
+            parts.append(ESCAPE_HATCH.format(
+                partial_marker=PARTIAL_MARKER,
+                partial_example=self.language.partial_example,
+            ))
 
         items = ["The node's description is fully implemented — no part deferred."
                  if not allow_partial else
@@ -449,6 +478,21 @@ class PromptBuilder:
         context = "\n".join(s.render() for s in sections)
         return Brief(node=node, core="\n".join(parts), context=context)
 
+    #: Phrases in a node's spec that usually mean "load a published dataset".
+    #: Used only to decide whether to spend brief space on REFERENCE_DATA_RULE
+    #: for a node the config listed no explicit resources for.
+    _REFERENCE_HINTS = (
+        "vader", "loughran", "mcdonald", "lexicon", "stopword", "stop-word",
+        "stop word", "wordlist", "word list", "word-list", "dictionary",
+        "sentiment word", "iso 3166", "iso 4217", "iso-3166", "iso-4217",
+        "unicode data", "corpus", "gazetteer", "published list", "standard list",
+        "reference table", "reference data", "canonical list",
+    )
+
+    def _spec_names_a_dataset(self, node: Node) -> bool:
+        low = node.comment.lower()
+        return any(hint in low for hint in self._REFERENCE_HINTS)
+
     def fix_prompt(self, node: Node, problem: str) -> str:
         return FIX.format(name=node.name, problem=problem.strip())
 
@@ -457,6 +501,7 @@ class PromptBuilder:
             name=node.name, kind=node.kind,
             description=_indent(node.comment),
             fence=_indent(scope.describe()),
+            unfinished_phrase=self.language.unfinished_phrase,
         )
 
     def double_check_prompt(self, node: Node, scope: Scope, verify_cmds: Sequence[str] = ()) -> str:

@@ -99,26 +99,12 @@ def find_partial_reason(root: str | Path, name: str, ignore: Sequence[str] = ())
 
 
 #: Per-language body an agent should leave behind.  Shown in the prompt.
-STUB_EXAMPLES = {
-    "c++": (
-        "// HARNESS-STUB(ir::Repo): declared here, implemented by its own node.\n"
-        "ir::Repo RustAnalyzer::analyze(const RepoFileIndex& index) const {\n"
-        "    Q_UNIMPLEMENTED();   // or: throw std::logic_error(\"HARNESS-STUB(...)\");\n"
-        "    return {};\n"
-        "}"
-    ),
-    "python": (
-        "def merge(curated, generated):\n"
-        "    # HARNESS-STUB(GraphMerger::merge): implemented by its own node.\n"
-        "    raise NotImplementedError(\"HARNESS-STUB(GraphMerger::merge)\")"
-    ),
-    "rust": (
-        "// HARNESS-STUB(scan_rust_file): implemented by its own node.\n"
-        "pub fn scan_rust_file(text: &str) -> RustFileItems {\n"
-        "    unimplemented!(\"HARNESS-STUB(scan_rust_file)\")\n"
-        "}"
-    ),
-}
+#: languages.py is the single source now; this stays as a compatibility alias
+#: for callers that still import it by name.
+from . import languages  # noqa: E402  (kept below the module docstring/consts)
+
+STUB_EXAMPLES = {lang.id: lang.stub_example
+                 for lang in (languages.CPP, languages.PYTHON, languages.RUST)}
 
 
 @dataclass(frozen=True)

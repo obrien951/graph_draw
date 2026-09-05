@@ -18,15 +18,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unittest.mock import patch
 
-from agent_harness import indexer
+from agent_harness import indexer, languages
 from agent_harness.backends import AgentSpec, Backend, RunRequest, RunResult
 from agent_harness.context import Budget, RepoContext
 from agent_harness.graphmodel import Graph, LEAF_FIRST, ROOT_FIRST
 from agent_harness.patchformat import FileBlockApplier, parse_blocks
 from agent_harness.prompts import PromptBuilder, parse_review
+from agent_harness.references import fetch as fetch_references, for_module, parse_all
 from agent_harness.review import Reviewer
 from agent_harness.runner import Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
-from agent_harness.scope import ScopeAuditor, ScopeConfig, ScopeResolver
+from agent_harness.scope import Scope, ScopeAuditor, ScopeConfig, ScopeResolver
 from agent_harness.state import DONE, FAILED, NOOP, PARTIAL, RunState
 from agent_harness.stubs import StubIndex, marker_for
 from agent_harness.verify import Verifier
@@ -134,7 +135,11 @@ class GraphOrderTests(unittest.TestCase):
     def test_pending_skips_implemented_nodes(self):
         order, _ = self.graph.order(ROOT_FIRST)
         pending = self.graph.pending(order)
-        self.assertEqual(len(pending), 43)
+        # count is not pinned: harness runs flip `implemented` in this very file,
+        # so the fixture's done/pending split drifts. The invariant is what
+        # matters — pending is exactly the not-yet-implemented nodes.
+        expected = [n.index for n in self.graph.nodes if not n.implemented]
+        self.assertEqual(pending, [i for i in order if i in set(expected)])
         self.assertTrue(all(not self.graph.node(i).implemented for i in pending))
 
     def test_cycles_are_reported_not_dropped(self):
@@ -227,6 +232,163 @@ class ReviewParsingTests(unittest.TestCase):
 
     def test_unparseable_reply_does_not_block(self):
         self.assertEqual(parse_review("I could not read the diff"), (True, []))
+
+
+class LanguageTests(unittest.TestCase):
+    def test_detect_recognises_rust_and_cpp_by_marker_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text("[package]\nname='x'\n")
+            self.assertEqual(languages.detect(root), "rust")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "CMakeLists.txt").write_text("project(x)\n")
+            self.assertEqual(languages.detect(root), "c++")
+
+    def test_detect_returns_none_for_an_unmarked_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "notes.txt").write_text("hi\n")
+            self.assertIsNone(languages.detect(Path(tmp)))
+
+    def test_rust_wins_over_a_stray_makefile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text("[package]\n")
+            (root / "Makefile").write_text("all:\n")
+            self.assertEqual(languages.detect(root), "rust")
+
+    def test_resolve_precedence_is_explicit_then_config_then_detect_then_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.toml").write_text("[package]\n")
+            self.assertEqual(languages.resolve("python", "typescript", root), "python")
+            self.assertEqual(languages.resolve(None, "typescript", root), "typescript")
+            self.assertEqual(languages.resolve(None, None, root), "rust")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(languages.resolve(None, None, Path(tmp)), languages.DEFAULT)
+
+    def test_aliases_and_unknown_ids(self):
+        self.assertIs(languages.get("rs"), languages.RUST)
+        self.assertIs(languages.get("cpp"), languages.CPP)
+        self.assertIs(languages.get("nonsense"), languages.GENERIC)
+        self.assertTrue(languages.known("rust"))
+        self.assertFalse(languages.known("nonsense"))
+
+
+class PromptLanguageTests(unittest.TestCase):
+    def setUp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "g.json"
+            path.write_text(json.dumps(TOY_GRAPH))
+            self.graph = Graph.load(path)
+        self.scope = Scope(node="Widget", allow=("core/**",), deny=(), max_files=8,
+                           max_added_lines=400, module="core", module_dir="core")
+
+    def _brief(self, language_hint=None, **kw):
+        builder = PromptBuilder(self.graph, language_hint=language_hint or "c++", **kw)
+        return builder.build(self.graph.find("Widget"), self.scope, sections=())
+
+    def test_rust_brief_shows_a_rust_stub_not_a_cpp_one(self):
+        core = self._brief("rust").core
+        self.assertIn("unimplemented!(", core)
+        self.assertNotIn("Q_UNIMPLEMENTED", core)
+
+    def test_cpp_is_still_the_default_and_unchanged(self):
+        core = self._brief().core
+        self.assertIn("Q_UNIMPLEMENTED", core)
+
+    def test_partial_example_in_the_escape_hatch_follows_the_language(self):
+        builder = PromptBuilder(self.graph, language_hint="rust")
+        core = builder.build(self.graph.find("Widget"), self.scope,
+                             sections=(), allow_partial=True).core
+        self.assertIn("HARNESS-PARTIAL(scan_rust_file)", core)
+        self.assertIn("pub fn scan_rust_file", core)
+
+    def test_noop_check_wording_follows_the_language(self):
+        builder = PromptBuilder(self.graph, language_hint="rust")
+        prompt = builder.noop_check_prompt(self.graph.find("Widget"), self.scope)
+        self.assertIn("unimplemented!()", prompt)
+        self.assertNotIn("Q_UNIMPLEMENTED", prompt)
+
+
+class ReferenceResourceTests(unittest.TestCase):
+    def setUp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "g.json"
+            data = json.loads(json.dumps(TOY_GRAPH))
+            data["nodes"][1]["comment"] = "Builds a VADER lexicon scorer."
+            path.write_text(json.dumps(data))
+            self.graph = Graph.load(path)
+        self.scope = Scope(node="Widget", allow=("core/**",), deny=(), max_files=8,
+                           max_added_lines=400, module="core", module_dir="core")
+
+    def test_parse_and_module_filter(self):
+        res = parse_all([
+            {"name": "VADER", "url": "http://x/v.txt", "modules": ["core"]},
+            {"name": "ISO4217", "url": "http://x/iso.csv"},
+        ])
+        self.assertEqual([r.name for r in for_module(res, "core")], ["VADER", "ISO4217"])
+        self.assertEqual([r.name for r in for_module(res, "other")], ["ISO4217"])
+
+    def test_spec_that_names_a_public_dataset_gets_the_dont_reconstruct_rule(self):
+        core = PromptBuilder(self.graph).build(
+            self.graph.find("Widget"), self.scope, sections=()).core
+        self.assertIn("do not reconstruct it from memory", core.lower())
+
+    def test_configured_resources_are_listed_in_the_brief(self):
+        builder = PromptBuilder(self.graph, reference_resources=parse_all(
+            [{"name": "VADER lexicon", "url": "http://ex/v.txt",
+              "path": "core/data/v.txt", "modules": ["core"]}]))
+        core = builder.build(self.graph.find("Widget"), self.scope, sections=()).core
+        self.assertIn("Reference resources for this node", core)
+        self.assertIn("http://ex/v.txt", core)
+
+    def test_fetch_fails_open_on_a_bad_url_and_uses_an_existing_repo_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "core" / "data").mkdir(parents=True)
+            (root / "core" / "data" / "here.txt").write_text("real data\n")
+            res = parse_all([
+                {"name": "already here", "path": "core/data/here.txt",
+                 "url": "http://example.invalid/never"},
+                {"name": "unreachable", "url": "http://example.invalid/nope.txt",
+                 "path": "core/data/missing.txt"},
+            ])
+            with patch("agent_harness.references._download",
+                       side_effect=OSError("no network in tests")):
+                out = fetch_references(res, root, root / ".harness" / "refs",
+                                       log=lambda _m: None)
+            self.assertEqual(out[0].local_path, "core/data/here.txt")  # real copy on disk
+            self.assertEqual(out[1].local_path, "")                    # fetch failed, left as URL
+
+    def test_fetch_writes_a_downloaded_resource_into_the_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            res = parse_all([{"name": "VADER", "url": "http://example.invalid/v.txt",
+                              "path": "core/data/v.txt"}])
+
+            def _fake(url, dest):
+                Path(dest).write_text("token\t2.0\n")
+
+            with patch("agent_harness.references._download", side_effect=_fake):
+                out = fetch_references(res, root, root / ".harness" / "refs",
+                                       log=lambda _m: None)
+            self.assertTrue(out[0].local_path.endswith("v.txt"))
+            self.assertTrue((root / out[0].local_path).is_file())
+
+
+class ScopeConfigLanguageTests(unittest.TestCase):
+    def test_language_and_reference_resources_load_from_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scope.json"
+            path.write_text(json.dumps({
+                "language": "rust",
+                "reference_resources": [{"name": "VADER", "url": "http://x/v.txt"}],
+                "modules": {"sentiment": {"dir": "src/sentiment"}},
+            }))
+            cfg = ScopeConfig.load(path)
+        self.assertEqual(cfg.language, "rust")
+        self.assertEqual(cfg.reference_resources[0]["name"], "VADER")
 
 
 def _fake_ctags(tmp: Path, *, version_output: str, version_returncode: int = 0,
