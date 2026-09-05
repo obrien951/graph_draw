@@ -20,7 +20,7 @@ from typing import Callable, Sequence
 from .backends import Backend, RunRequest
 from .context import RepoContext
 from .gate import REVIEW, VERIFY, Gate
-from .graphmodel import Graph, Node, ROOT_FIRST
+from .graphmodel import KIND_ARTIFACT, Graph, Node, ROOT_FIRST
 from .prompts import PromptBuilder, parse_noop_verdict
 from .review import Reviewer
 from .scope import ScopeAuditor, ScopeResolver, Violation
@@ -159,6 +159,14 @@ class Harness:
     def gate(self) -> Gate:
         """The completion gate, rebuilt per call so late-swapped parts are honoured."""
         return Gate(self.verifier, self.reviewer, self.options.require_review)
+
+    def _gate_diff(self, node: Node, snapshot) -> str:
+        """The diff handed to the gate. An Artifact node's diff is a whole
+        downloaded data file — megabytes of no use to a reviewer, and the gate
+        skips review for it anyway — so don't even generate it."""
+        if not self.workspace or node.kind == KIND_ARTIFACT:
+            return ""
+        return self.workspace.diff(snapshot)
 
     # ------------------------------------------------------------------ walk
     def run(self, indices: Sequence[int]) -> list[NodeOutcome]:
@@ -472,8 +480,7 @@ class Harness:
             # The gate: build/test commands, then the review agent, in that
             # order, dispatched here by code rather than at an agent's option.
             verdict = self.gate().check(
-                node, scope,
-                self.workspace.diff(snapshot) if self.workspace else "",
+                node, scope, self._gate_diff(node, snapshot),
                 verify_log=self.state_dir / "logs" / f"{node.slug}.verify.log",
                 review_log=self.state_dir / "logs" / f"{node.slug}.review{attempt}.log",
             )
@@ -495,7 +502,7 @@ class Harness:
                         changed = self.workspace.changes(snapshot) if self.workspace else {}
                         continue
                     verdict = self.gate().check(
-                        node, scope, self.workspace.diff(snapshot) if self.workspace else "",
+                        node, scope, self._gate_diff(node, snapshot),
                         verify_log=self.state_dir / "logs" / f"{node.slug}.verify.log",
                         review_log=self.state_dir / "logs" / f"{node.slug}.review{attempt}.fix{round_no}.log",
                     )
@@ -621,7 +628,7 @@ class Harness:
                 continue
 
             verdict = self.gate().check(
-                node, scope, self.workspace.diff(good),
+                node, scope, self._gate_diff(node, good),
                 verify_log=self.state_dir / "logs" / f"{node.slug}.doublecheck{round_no}.verify.log",
                 review_log=self.state_dir / "logs" / f"{node.slug}.doublecheck{round_no}.review.log",
             )

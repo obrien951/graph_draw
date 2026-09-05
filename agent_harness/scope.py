@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
-from .graphmodel import Graph, Node
+from .graphmodel import KIND_ARTIFACT, KIND_MODULE, Graph, Node
 from .pathglob import first_match, matches_any
 
 DEFAULT_IGNORE = (
@@ -158,7 +158,7 @@ class ScopeResolver:
 
     def resolve(self, node: Node) -> Scope:
         cfg = self.config
-        module = node if node.kind == "Module" else self.graph.owner_module(node.index)
+        module = node if node.kind == KIND_MODULE else self.graph.owner_module(node.index)
         module_name = module.name if module else None
         mdir = self.module_dir(module_name)
         mentry = cfg.modules.get(module_name or "", {})
@@ -180,15 +180,33 @@ class ScopeResolver:
             if p not in allow:
                 allow.append(p)
 
+        max_files = int(nentry.get("max_files", mentry.get("max_files", cfg.max_files)))
+        max_added = int(nentry.get("max_added_lines",
+                                   mentry.get("max_added_lines", cfg.max_added_lines)))
+        artifact_note = None
+        if node.kind == KIND_ARTIFACT:
+            # An Artifact node writes one downloaded file plus its provenance
+            # sidecar, nowhere else. The file's own path (from the graph JSON)
+            # is the fence; a published data file also blows any sane
+            # added-lines budget, so that check is lifted for this kind.
+            art_path = str(node.raw.get("path", "")).strip()
+            if art_path:
+                for extra in (art_path, f"{art_path}.provenance.json"):
+                    if extra not in allow:
+                        allow.append(extra)
+            max_files = int(nentry.get("max_files", 4))
+            max_added = max(max_added, 50_000_000)
+            artifact_note = ("This is an Artifact node: download the real file, place it "
+                             "at the path above, write its .provenance.json, touch nothing else.")
+
         deny = list(dict.fromkeys(list(nentry.get("deny", [])) + list(cfg.deny)))
-        notes = tuple(filter(None, [nentry.get("note"), mentry.get("note")]))
+        notes = tuple(filter(None, [nentry.get("note"), mentry.get("note"), artifact_note]))
         return Scope(
             node=node.name,
             allow=tuple(allow),
             deny=tuple(deny),
-            max_files=int(nentry.get("max_files", mentry.get("max_files", cfg.max_files))),
-            max_added_lines=int(nentry.get("max_added_lines",
-                                           mentry.get("max_added_lines", cfg.max_added_lines))),
+            max_files=max_files,
+            max_added_lines=max_added,
             module=module_name,
             module_dir=mdir,
             notes=notes,

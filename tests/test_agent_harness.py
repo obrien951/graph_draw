@@ -6,6 +6,8 @@ path, the retry and the graph update are all exercised for real.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import shutil
 import subprocess
@@ -18,13 +20,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from unittest.mock import patch
 
-from agent_harness import indexer, languages
+from agent_harness import cli, indexer, languages
 from agent_harness.backends import AgentSpec, Backend, RunRequest, RunResult
 from agent_harness.context import Budget, RepoContext
 from agent_harness.graphmodel import Graph, LEAF_FIRST, ROOT_FIRST
 from agent_harness.patchformat import FileBlockApplier, parse_blocks
 from agent_harness.prompts import PromptBuilder, parse_review
-from agent_harness.references import fetch as fetch_references, for_module, parse_all
+from agent_harness.gate import Gate
+from agent_harness.references import (
+    ReferenceResource, check_artifact, fetch as fetch_references, for_module, parse_all, sha256_of,
+)
 from agent_harness.review import Reviewer
 from agent_harness.runner import Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
 from agent_harness.scope import Scope, ScopeAuditor, ScopeConfig, ScopeResolver
@@ -389,6 +394,200 @@ class ScopeConfigLanguageTests(unittest.TestCase):
             cfg = ScopeConfig.load(path)
         self.assertEqual(cfg.language, "rust")
         self.assertEqual(cfg.reference_resources[0]["name"], "VADER")
+
+
+ARTIFACT_GRAPH = {
+    "nodes": [
+        {"kind": "Artifact", "name": "vader_lexicon",
+         "comment": "The VADER sentiment lexicon, tab-separated, ~7500 rows.",
+         "url": "https://example.invalid/vader_lexicon.txt",
+         "path": "data/vader_lexicon.txt", "license": "MIT", "implemented": False},
+        {"kind": "Module", "name": "sentiment", "comment": "scorer", "implemented": False},
+    ],
+    "edges": [{"origin": 1, "destination": 0, "comment": "depends on"}],
+}
+
+
+def _artifact_graph(tmp: Path, **node_overrides) -> Graph:
+    data = json.loads(json.dumps(ARTIFACT_GRAPH))
+    data["nodes"][0].update(node_overrides)
+    p = tmp / "g.json"
+    p.write_text(json.dumps(data))
+    return Graph.load(p)
+
+
+class ArtifactNodeTests(unittest.TestCase):
+    def test_kind_is_registered(self):
+        self.assertEqual(languages.get("rust").id, "rust")  # sanity: import wiring
+        from agent_harness.graphmodel import KIND_ARTIFACT, KINDS
+        self.assertIn(KIND_ARTIFACT, KINDS)
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp))
+        self.assertEqual(g.find("vader_lexicon").kind, "Artifact")
+
+    def test_scope_fences_the_file_and_its_provenance_and_lifts_the_line_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp))
+        scope = ScopeResolver(g, ScopeConfig()).resolve(g.find("vader_lexicon"))
+        self.assertEqual(set(scope.allow),
+                         {"data/vader_lexicon.txt", "data/vader_lexicon.txt.provenance.json"})
+        self.assertGreater(scope.max_added_lines, 1_000_000)
+        self.assertTrue(any("Artifact node" in n for n in scope.notes))
+
+    def test_from_node_reads_the_graph_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp), sha256="ABC123")
+        res = ReferenceResource.from_node(g.find("vader_lexicon"))
+        self.assertEqual(res.url, "https://example.invalid/vader_lexicon.txt")
+        self.assertEqual(res.path, "data/vader_lexicon.txt")
+        self.assertEqual(res.sha256, "abc123")
+        self.assertEqual(res.license, "MIT")
+
+    def test_brief_is_acquisition_shaped_and_carries_the_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp))
+        node = g.find("vader_lexicon")
+        scope = ScopeResolver(g, ScopeConfig()).resolve(node)
+        core = PromptBuilder(g).build(node, scope, sections=()).core
+        self.assertIn("Artifact** node", core)
+        self.assertIn("search for and retrieve a published artifact", core)  # skill body
+        self.assertIn("provenance.json", core)
+        self.assertNotIn("DRY and SOLID", core)          # code-node section, not here
+        self.assertNotIn("Unfilled calls waiting on YOU", core)
+
+    def test_artifact_is_ordered_before_its_dependent_even_root_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp))
+        order, cyclic = g.order(ROOT_FIRST)
+        self.assertEqual(cyclic, [])
+        pos = {i: n for n, i in enumerate(order)}
+        self.assertLess(pos[g.find("vader_lexicon").index], pos[g.find("sentiment").index])
+
+    def test_a_module_depending_on_an_unbuilt_artifact_is_told_to_load_the_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = _artifact_graph(Path(tmp))
+        sentiment = g.find("sentiment")
+        scope = ScopeResolver(g, ScopeConfig()).resolve(sentiment)
+        core = PromptBuilder(g).build(sentiment, scope, sections=()).core
+        self.assertIn("Artifact dependencies not yet on disk", core)
+        self.assertIn("data/vader_lexicon.txt", core)
+        self.assertNotIn("HARNESS-STUB(vader_lexicon)", core)   # never stub a file
+        self.assertNotIn("Code dependencies that DO NOT exist yet", core)  # no code deps here
+
+    def test_cli_rejects_an_artifact_with_no_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git(root, "init", "-q")
+            _artifact_graph(root, path="")     # strip the path
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                code = cli.main(["--graph", str(root / "g.json"), "--repo", str(root),
+                                 "--backend", "dry-run", "--plan-only"])
+        self.assertEqual(code, 2)
+        self.assertIn("declare no `path`", buf.getvalue())
+
+    def test_check_artifact_present_missing_and_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            res = ReferenceResource(name="x", path="data/lex.txt")
+            self.assertFalse(check_artifact(res, root).ok)             # missing
+            (root / "data").mkdir()
+            (root / "data" / "lex.txt").write_text("good:2.0\n")
+            self.assertTrue(check_artifact(res, root).ok)              # present, no pin
+            pinned = ReferenceResource(name="x", path="data/lex.txt", sha256="00" * 32)
+            outcome = check_artifact(pinned, root)
+            self.assertFalse(outcome.ok)
+            self.assertIn("sha256", outcome.note)
+            real = ReferenceResource(name="x", path="data/lex.txt",
+                                     sha256=sha256_of(root / "data" / "lex.txt"))
+            self.assertTrue(check_artifact(real, root).ok)
+
+
+class ArtifactGateTests(unittest.TestCase):
+    def _gate(self, graph):
+        root = self.root
+        return Gate(Verifier([], root), Reviewer(None, PromptBuilder(graph), root))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        git(self.root, "init", "-q")
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_gate_passes_when_the_file_is_placed_and_never_calls_the_reviewer(self):
+        g = _artifact_graph(self.root)
+        node = g.find("vader_lexicon")
+        scope = ScopeResolver(g, ScopeConfig()).resolve(node)
+        (self.root / "data").mkdir()
+        (self.root / "data" / "vader_lexicon.txt").write_text("word\t1.0\n")
+        verdict = self._gate(g).check(node, scope, "")
+        self.assertTrue(verdict.ok)
+        self.assertFalse(verdict.review_ran)
+
+    def test_gate_fails_with_an_artifact_stage_when_the_file_is_absent(self):
+        g = _artifact_graph(self.root)
+        node = g.find("vader_lexicon")
+        scope = ScopeResolver(g, ScopeConfig()).resolve(node)
+        verdict = self._gate(g).check(node, scope, "")
+        self.assertFalse(verdict.ok)
+        self.assertEqual(verdict.stage, "artifact")
+
+    def test_a_harness_partial_marker_defers_to_the_runner(self):
+        g = _artifact_graph(self.root)
+        node = g.find("vader_lexicon")
+        scope = ScopeResolver(g, ScopeConfig()).resolve(node)
+        (self.root / "data").mkdir()
+        (self.root / "data" / "vader_lexicon.txt.provenance.json").write_text(
+            '{"status":"unresolved"}\n// HARNESS-PARTIAL(vader_lexicon): source needs a login\n')
+        self.assertTrue(self._gate(g).check(node, scope, "").ok)
+
+
+class ArtifactHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.email", "harness@test")
+        git(self.root, "config", "user.name", "harness")
+        self.graph_path = self.root / "graph.json"
+        self.graph_path.write_text(json.dumps(ARTIFACT_GRAPH, indent=2))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "baseline")
+        self.addCleanup(self.tmp.cleanup)
+
+    def _harness(self, script):
+        graph = Graph.load(self.graph_path)
+        config = ScopeConfig()
+        backend = ScriptedBackend(self.root, script)
+        state_dir = self.root / ".harness"
+        prompts = PromptBuilder(graph)
+        return Harness(
+            graph=graph, root=self.root, backend=backend,
+            scopes=ScopeResolver(graph, config),
+            context=RepoContext(self.root, ignore=config.ignore, budget=Budget()),
+            prompts=prompts, workspace=GitWorkspace(self.root, ignore=config.ignore),
+            verifier=Verifier([], self.root), reviewer=Reviewer(None, prompts, self.root),
+            state=RunState(state_dir / "state.json"), state_dir=state_dir,
+            options=HarnessOptions(order=ROOT_FIRST, attempts=2, on_violation=ON_VIOLATION_RETRY),
+            log=lambda _m: None,
+        ), graph
+
+    def test_placing_the_file_marks_the_artifact_done(self):
+        harness, graph = self._harness([{
+            "data/vader_lexicon.txt": "word\t1.5\t0.5\t[1, 2]\n",
+            "data/vader_lexicon.txt.provenance.json": '{"sha256":"x","source_url":"u"}\n',
+        }])
+        outcome = harness.run_node(graph.find("vader_lexicon"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertFalse(outcome.reviewed)
+        self.assertTrue(graph.find("vader_lexicon").implemented)
+
+    def test_provenance_without_the_actual_file_fails_the_gate(self):
+        prov = {"data/vader_lexicon.txt.provenance.json": '{"status":"?"}\n'}
+        harness, graph = self._harness([prov, prov])
+        outcome = harness.run_node(graph.find("vader_lexicon"))
+        self.assertEqual(outcome.status, FAILED)
+        self.assertFalse(graph.find("vader_lexicon").implemented)
 
 
 def _fake_ctags(tmp: Path, *, version_output: str, version_returncode: int = 0,

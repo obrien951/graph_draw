@@ -47,6 +47,8 @@ class ReferenceResource:
     note: str = ""
     modules: tuple[str, ...] = ()
     local_path: str = ""    # filled by fetch(): where a real copy actually sits
+    sha256: str = ""        # expected hex digest, if the graph pins one
+    license: str = ""       # SPDX id or short name, if known
 
     @classmethod
     def parse(cls, raw: dict) -> "ReferenceResource":
@@ -59,7 +61,19 @@ class ReferenceResource:
             path=str(raw.get("path", "")),
             note=str(raw.get("note", "")),
             modules=tuple(str(m) for m in mods),
+            sha256=str(raw.get("sha256", "")).lower().strip(),
+            license=str(raw.get("license", "")),
         )
+
+    @classmethod
+    def from_node(cls, node) -> "ReferenceResource":
+        """An Artifact node's own fields as a resource. The node's `comment`
+        is the human description; `url`/`path`/`sha256`/`license`/`format`
+        (or `note`) come straight off the graph JSON."""
+        raw = dict(getattr(node, "raw", {}) or {})
+        raw.setdefault("name", getattr(node, "name", "artifact"))
+        raw.setdefault("note", raw.get("format", ""))
+        return cls.parse(raw)
 
     def applies_to(self, module_name: str | None) -> bool:
         return not self.modules or (module_name or "") in self.modules
@@ -72,6 +86,10 @@ class ReferenceResource:
             bits.append(f"    the code loads it from: {self.path}")
         if self.local_path and self.local_path != self.path:
             bits.append(f"    a real copy is already on disk at: {self.local_path}")
+        if self.sha256:
+            bits.append(f"    sha256: {self.sha256}")
+        if self.license:
+            bits.append(f"    license: {self.license}")
         if self.note:
             bits.append(f"    format: {self.note}")
         return "\n".join(bits)
@@ -127,6 +145,49 @@ def fetch(resources: Sequence[ReferenceResource], root: str | Path,
             rel = str(dest)
         out.append(replace(res, local_path=rel))
     return out
+
+
+def sha256_of(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@dataclass(frozen=True)
+class ArtifactCheck:
+    ok: bool
+    note: str = ""
+    detail: str = ""
+
+
+def check_artifact(res: ReferenceResource, root: str | Path) -> ArtifactCheck:
+    """The deterministic gate for an Artifact node: the declared file must
+    exist, be non-empty, and match the pinned sha256 if the graph gave one.
+    This stands in for the code-review pass, which has nothing to say about a
+    downloaded data file."""
+    root = Path(root)
+    if not res.path:
+        return ArtifactCheck(True, note="no path pinned — cannot verify placement")
+    target = root / res.path
+    if not target.is_file():
+        return ArtifactCheck(
+            False, note=f"artifact not found at {res.path}",
+            detail=f"The artifact was not placed at its declared path `{res.path}`. "
+                   f"Download it from the source and save it there exactly.")
+    if target.stat().st_size == 0:
+        return ArtifactCheck(False, note=f"artifact at {res.path} is empty",
+                             detail=f"`{res.path}` exists but is empty.")
+    if res.sha256:
+        got = sha256_of(target)
+        if got != res.sha256:
+            return ArtifactCheck(
+                False, note=f"sha256 mismatch for {res.path}",
+                detail=f"`{res.path}` sha256 is {got}, the graph pins {res.sha256}. "
+                       f"This is the wrong file, a truncated download, or a changed "
+                       f"upstream — do not adjust the pin to match; get the right file.")
+    return ArtifactCheck(True, note=f"{res.path} present ({target.stat().st_size} bytes)")
 
 
 def _download(url: str, dest: Path) -> None:

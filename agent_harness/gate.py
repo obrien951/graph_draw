@@ -23,12 +23,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .graphmodel import Node
+from .graphmodel import KIND_ARTIFACT, Node
+from .references import ReferenceResource, check_artifact
 from .review import Reviewer
 from .scope import Scope
+from .stubs import find_partial_reason
 from .verify import Verifier
 
-VERIFY, REVIEW = "verify", "review"
+VERIFY, REVIEW, ARTIFACT = "verify", "review", "artifact"
 
 
 @dataclass
@@ -110,6 +112,22 @@ class Gate:
                 return GateResult(ok=False, stage=VERIFY, verify_ran=True,
                                   note=f"verify failed: {verdict.command}",
                                   detail=verdict.feedback())
+
+        if node.kind == KIND_ARTIFACT:
+            # A downloaded data file has nothing for a code reviewer to judge;
+            # the deterministic check (file present, non-empty, sha256) stands
+            # in for the review stage and is fail-closed like the rest of the
+            # gate. A declared HARNESS-PARTIAL defers to the runner, same as a
+            # code node.
+            root = self.reviewer.root
+            if find_partial_reason(root, node.name):
+                return result
+            check = check_artifact(ReferenceResource.from_node(node), root)
+            if not check.ok:
+                return GateResult(ok=False, stage=ARTIFACT, verify_ran=result.verify_ran,
+                                  note=check.note, detail=check.detail)
+            result.note = check.note
+            return result
 
         if not self.reviewer.enabled():
             if self.require_review:

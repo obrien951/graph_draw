@@ -15,9 +15,9 @@ import textwrap
 from dataclasses import dataclass
 from typing import Sequence
 
-from . import languages
+from . import languages, skills
 from .context import Section
-from .graphmodel import Graph, Node
+from .graphmodel import KIND_ARTIFACT, Graph, Node
 from .references import ReferenceResource, for_module
 from .scope import Scope
 from .stubs import PARTIAL_MARKER, StubSite, marker_for, partial_marker_for
@@ -26,9 +26,9 @@ MISSION = """\
 # Implement one graph node: {name}
 
 You are one agent in a graph-driven build. The dependency graph of this project
-is the plan: every node is a Module, Class or Function, and an edge `A -> B`
-means A depends on B. You have been given exactly one node. Another agent gets
-each of the others.{order_note}
+is the plan: every node is a Module, Class, Function or Artifact, and an edge
+`A -> B` means A depends on B. You have been given exactly one node. Another
+agent gets each of the others.{order_note}
 
 ## The node
 kind          : {kind}
@@ -39,11 +39,42 @@ owning module : {module} -> {module_dir}
 {description}
 """
 
-DEPENDENCIES = """\
+ARTIFACT_MISSION = """\
+# Acquire one graph node: {name}
+
+This is an **Artifact** node, not a code node. You are not writing an
+implementation — you are retrieving a real, published file that the rest of
+the build depends on, verifying it, and placing it where the graph says.
+
+## The node
+kind          : {kind}
+name          : {name}
+owning module : {module} -> {module_dir}
+
+## What to acquire — follow this literally
+{description}
+
+## The concrete target
+{resource}
+
+## Nodes that depend on this artifact
+{callers}
+"""
+
+ARTIFACT_DONE = """\
+## Definition of done
+{items}
+
+Write the file and its provenance now.
+"""
+
+DEPS_EXISTING = """\
 ## Dependencies that already exist — call them, never re-create them
 {existing}
+"""
 
-## Dependencies that DO NOT exist yet — leave unfilled calls
+DEPS_MISSING_CODE = """\
+## Code dependencies that DO NOT exist yet — leave unfilled calls
 These nodes are scheduled after yours. You must NOT implement them. Declare
 exactly what you need from each (header, signature, type), write the call as if
 it worked, and leave the body unfilled with the marker `{marker_shape}` so the
@@ -57,7 +88,19 @@ Shape of an unfilled call:
 A stub must still compile and link. A signature you invent here is a contract
 the next agent inherits: keep it minimal and exactly as the dependency's own
 description implies.
+"""
 
+DEPS_MISSING_ARTIFACT = """\
+## Artifact dependencies not yet on disk — load them from their path anyway
+These are published files that their own Artifact node will download and place
+at the path shown. They are ordered before you in the walk, so the file is
+normally already there — but write the load against the path regardless. Do
+NOT inline a copy of the data and do NOT leave a HARNESS-STUB for it: it is a
+file, not a call.
+{missing}
+"""
+
+DEPS_CALLERS = """\
 ## Nodes that depend on you — design the interface they need, and no more
 {callers}
 """
@@ -404,6 +447,9 @@ class PromptBuilder:
         allow_partial: bool = False,
         existing_partial: str | None = None,
     ) -> Brief:
+        if node.kind == KIND_ARTIFACT:
+            return self._artifact_brief(node, scope, sections, verify_cmds,
+                                        feedback, allow_partial, existing_partial)
         deps = self.graph.dependencies(node.index)
         existing = [d for d in deps if d.implemented]
         missing = [d for d in deps if not d.implemented]
@@ -423,16 +469,20 @@ class PromptBuilder:
                 partial_reason=existing_partial, partial_marker=PARTIAL_MARKER,
             ))
 
-        parts.append(DEPENDENCIES.format(
-            existing=_bullets([f"{d.name} ({d.kind}): {_one_line(d.comment)}" for d in existing]),
-            missing=_bullets([
-                f"{d.name} ({d.kind}) — leave `{marker_for(d.name)}`: {_one_line(d.comment)}"
-                for d in missing
-            ]),
-            marker_shape=marker_for("<node name>"),
-            stub_example=self.language.stub_example,
-            callers=_bullets([f"{c.name} ({c.kind}): {_one_line(c.comment)}" for c in callers]),
-        ))
+        missing_code = [d for d in missing if d.kind != KIND_ARTIFACT]
+        missing_art = [d for d in missing if d.kind == KIND_ARTIFACT]
+        parts.append(DEPS_EXISTING.format(
+            existing=_bullets([self._existing_dep_line(d) for d in existing])))
+        if missing_code:
+            parts.append(DEPS_MISSING_CODE.format(
+                missing=_bullets([self._missing_dep_line(d) for d in missing_code]),
+                marker_shape=marker_for("<node name>"),
+                stub_example=self.language.stub_example))
+        if missing_art:
+            parts.append(DEPS_MISSING_ARTIFACT.format(
+                missing=_bullets([self._missing_dep_line(d) for d in missing_art])))
+        parts.append(DEPS_CALLERS.format(
+            callers=_bullets([f"{c.name} ({c.kind}): {_one_line(c.comment)}" for c in callers])))
 
         if stub_sites:
             parts.append(STUB_SITES.format(
@@ -461,8 +511,11 @@ class PromptBuilder:
                  if not allow_partial else
                  "The node's description is fully implemented, or the one part that "
                  "genuinely is not carries a HARNESS-PARTIAL marker naming why."]
-        if missing:
-            items.append("Every not-yet-built dependency is declared and left unfilled with its marker.")
+        if any(d.kind != KIND_ARTIFACT for d in missing):
+            items.append("Every not-yet-built code dependency is declared and left unfilled with its marker.")
+        if any(d.kind == KIND_ARTIFACT for d in missing):
+            items.append("Each not-yet-fetched Artifact dependency is loaded from the path its "
+                         "node will place it at — no inlined copy, no stub marker.")
         items.append("The project still builds; nothing that worked before is broken.")
         if verify_cmds:
             items.append("These commands pass: " + "; ".join(verify_cmds))
@@ -471,6 +524,66 @@ class PromptBuilder:
             "stubs you left, and anything the graph itself got wrong."
         )
         parts.append(DONE.format(items=_bullets(items), directive="Write the changes now."))
+
+        if feedback:
+            parts.append(RETRY.format(feedback=feedback.strip()))
+
+        context = "\n".join(s.render() for s in sections)
+        return Brief(node=node, core="\n".join(parts), context=context)
+
+    def _existing_dep_line(self, d: Node) -> str:
+        if d.kind == KIND_ARTIFACT:
+            res = ReferenceResource.from_node(d)
+            where = f"the file at `{res.path}`" if res.path else "a downloaded file"
+            return (f"{d.name} (Artifact): {where} — load it from that path, "
+                    f"never inline a copy. {_one_line(d.comment, 120)}")
+        return f"{d.name} ({d.kind}): {_one_line(d.comment)}"
+
+    def _missing_dep_line(self, d: Node) -> str:
+        if d.kind == KIND_ARTIFACT:
+            res = ReferenceResource.from_node(d)
+            where = f"`{res.path}`" if res.path else "the path its node names"
+            fmt = f" [{res.note}]" if res.note else ""
+            return f"{d.name} → load from {where}{fmt}: {_one_line(d.comment, 140)}"
+        return f"{d.name} ({d.kind}) — leave `{marker_for(d.name)}`: {_one_line(d.comment)}"
+
+    def _artifact_brief(self, node: Node, scope: Scope, sections: Sequence[Section],
+                        verify_cmds: Sequence[str], feedback: str,
+                        allow_partial: bool, existing_partial: str | None) -> Brief:
+        res = ReferenceResource.from_node(node)
+        callers = self.graph.dependents(node.index)
+        parts = [ARTIFACT_MISSION.format(
+            name=node.name, kind=node.kind,
+            module=scope.module or "(standalone)",
+            module_dir=scope.module_dir or "(unmapped)",
+            description=_indent(node.comment),
+            resource=_indent(res.describe()),
+            callers=_bullets([f"{c.name} ({c.kind}): {_one_line(c.comment)}" for c in callers]),
+        )]
+
+        if existing_partial:
+            parts.append(RESUME_PARTIAL.format(
+                partial_reason=existing_partial, partial_marker=PARTIAL_MARKER))
+
+        parts.append(FENCE.format(fence=scope.describe()))
+        parts.append("## How to do this\n\n" + skills.load(skills.ARTIFACT_SEARCH, demote=1))
+
+        items = [
+            f"The real file is saved at `{res.path or '<the path the node names>'}`, "
+            "byte-for-byte as published (no re-encoding, re-sorting or trimming).",
+        ]
+        if res.sha256:
+            items.append(f"Its sha256 is {res.sha256}.")
+        items.append(f"`{res.path or '<path>'}.provenance.json` records source URL, "
+                     "retrieval time, sha256, bytes and license.")
+        if verify_cmds:
+            items.append("The project still builds — these pass: " + "; ".join(verify_cmds))
+        if allow_partial:
+            items.append(f"...or, if the file genuinely cannot be obtained, a "
+                         f"`{partial_marker_for(node.name)}: <blocker>` marker in the "
+                         f"provenance file says why — never a fabricated data file.")
+        items.append("Your summary names the source, the sha256, the license and any transform.")
+        parts.append(ARTIFACT_DONE.format(items=_bullets(items)))
 
         if feedback:
             parts.append(RETRY.format(feedback=feedback.strip()))

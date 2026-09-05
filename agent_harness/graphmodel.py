@@ -17,7 +17,16 @@ from typing import Iterable, Iterator, Sequence
 KIND_MODULE = "Module"
 KIND_CLASS = "Class"
 KIND_FUNCTION = "Function"
-KIND_ORDER = {KIND_MODULE: 0, KIND_CLASS: 1, KIND_FUNCTION: 2}
+#: A published external file the build depends on (a lexicon, a dataset, a
+#: grammar, a model file). Its node is not implemented by writing code — its
+#: agent locates the canonical source, downloads it, verifies it, drops it at
+#: the path the node names and records provenance. Modules that need it point
+#: an edge at it, exactly like a code dependency.
+KIND_ARTIFACT = "Artifact"
+KINDS = (KIND_MODULE, KIND_CLASS, KIND_FUNCTION, KIND_ARTIFACT)
+#: tie-breaker only (real ordering comes from the edges): an Artifact has no
+#: dependencies of its own, so it sorts alongside the leaves.
+KIND_ORDER = {KIND_MODULE: 0, KIND_CLASS: 1, KIND_FUNCTION: 2, KIND_ARTIFACT: 2}
 
 #: Edge labels that mean "the origin owns the destination".
 OWNERSHIP_LABELS = ("contains", "provides")
@@ -192,6 +201,10 @@ class Graph:
         ``root-first`` — the "foot to leaf" walk: a node is visited before the
         dependencies it will call, so each agent stubs what does not exist yet.
         ``leaf-first`` — the opposite: dependencies land before their callers.
+
+        An edge whose destination is an Artifact is always ordered
+        dependency-first regardless of strategy: a downloaded file cannot be
+        stubbed, so it must be on disk before anything that loads it is built.
         """
         if strategy not in ORDERS:
             raise GraphError(f"unknown order {strategy!r}; expected one of {ORDERS}")
@@ -199,7 +212,8 @@ class Graph:
         successors: dict[int, set[int]] = {i: set() for i in range(len(self.nodes))}
         indeg = {i: 0 for i in range(len(self.nodes))}
         for e in self.edges:
-            a, b = (e.origin, e.destination) if strategy == ROOT_FIRST else (e.destination, e.origin)
+            dep_first = strategy == LEAF_FIRST or self.nodes[e.destination].kind == KIND_ARTIFACT
+            a, b = (e.destination, e.origin) if dep_first else (e.origin, e.destination)
             if b in successors[a]:
                 continue
             successors[a].add(b)

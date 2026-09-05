@@ -12,7 +12,7 @@ from typing import Sequence
 from . import languages
 from .backends import BACKENDS, DEFAULT_SERVER_URL, DRY_RUN, OPENCODE, AgentSpec, build_backend
 from .context import Budget, RepoContext
-from .graphmodel import LEAF_FIRST, ORDERS, ROOT_FIRST, Graph, GraphError
+from .graphmodel import KINDS, LEAF_FIRST, ORDERS, ROOT_FIRST, Graph, GraphError
 from .prompts import PromptBuilder
 from .references import ReferenceResource, fetch as fetch_references, parse_all
 from .review import Reviewer
@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--only", action="append", default=[], metavar="NAME",
                    help="build just this node (repeatable); implies --force")
     s.add_argument("--skip", action="append", default=[], metavar="NAME", help="never build this node")
-    s.add_argument("--kind", action="append", default=[], choices=["Module", "Class", "Function"],
+    s.add_argument("--kind", action="append", default=[], choices=list(KINDS),
                    help="restrict to these node kinds")
     s.add_argument("--force", action="append", default=[], metavar="NAME",
                    help="build a node even though the graph marks it implemented")
@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--strong-node", action="append", default=[], metavar="NAME",
                    help="build this node with --strong-model (repeatable)")
     m.add_argument("--strong-kind", action="append", default=[], metavar="KIND",
-                   choices=["Module", "Class", "Function"],
+                   choices=list(KINDS),
                    help="build every node of this kind with --strong-model (repeatable)")
 
     t = p.add_argument_group("non-code steps")
@@ -405,6 +405,16 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"{', '.join(graph.node(i).name for i in cyclic)}")
 
     scopes = ScopeResolver(graph, config)
+    pathless = [graph.node(i).name for i in selection
+                if graph.node(i).kind == "Artifact"
+                and not str(graph.node(i).raw.get("path", "")).strip()
+                and not config.nodes.get(graph.node(i).name, {}).get("allow")]
+    if pathless:
+        print("error: these Artifact node(s) declare no `path` (and no scope-config allow "
+              "entry), so the harness does not know where the downloaded file goes:\n  "
+              + ", ".join(pathless)
+              + "\n  Add a \"path\" field to the node in the graph JSON.", file=sys.stderr)
+        return 2
     blocked = [(graph.node(i).name, culprit) for i in selection
                if (culprit := scopes.resolve(graph.node(i)).blocking_deny())]
     if blocked:
@@ -427,10 +437,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         for position, i in enumerate(selection, 1):
             node = graph.node(i)
             scope = scopes.resolve(node)
-            todo = [d.name for d in graph.unimplemented_dependencies(i)]
             print(f"{position:3d}. {node.kind:8s} {node.name}")
             print(_wrap("scope", scope.allow or ["(none)"]))
-            print(_wrap("stubs", todo or ["(none)"]))
+            if node.kind == "Artifact":
+                src = node.raw.get("url") or node.comment.split("\n", 1)[0][:80] or "(unspecified)"
+                print(_wrap("source", [src]))
+            else:
+                todo = graph.unimplemented_dependencies(i)
+                stubs = [d.name for d in todo if d.kind != "Artifact"]
+                artifacts = [d.name for d in todo if d.kind == "Artifact"]
+                print(_wrap("stubs", stubs or ["(none)"]))
+                if artifacts:
+                    print(_wrap("artifacts", artifacts))
         if args.plan_only:
             return 0
 

@@ -1,6 +1,7 @@
 # graph agent harness
 
-Walks a `graph_io` dependency graph and deploys one coding agent per node.
+Walks a `graph_io` dependency graph and deploys one agent per node — a coding
+agent for a `Module`/`Class`/`Function`, an acquisition agent for an `Artifact`.
 
 The graphs in `graphs/` are implementation plans: each node's `comment` is the
 prompt for the thing it represents, `implemented` says whether it exists, and an
@@ -139,6 +140,44 @@ Two mechanisms push back:
    has a URL and isn't already on disk into `<state-dir>/refs/` and hands the
    node the local path. It fails open: an unreachable resource just stays a URL
    in the brief. A module entry may carry its own `reference_resources` list.
+
+## Artifact nodes
+
+`reference_resources` is a side-channel. When a published file is a real
+dependency — something a module cannot be built or tested without — it should
+be a **node**, with edges from the things that need it, exactly like a code
+dependency. That node's `kind` is `Artifact`:
+
+```jsonc
+{
+  "kind": "Artifact",
+  "name": "vader_lexicon",
+  "comment": "The VADER sentiment lexicon: token<TAB>mean<TAB>std<TAB>[raw ratings].",
+  "url": "https://raw.githubusercontent.com/cjhutto/vaderSentiment/master/vaderSentiment/vader_lexicon.txt",
+  "path": "src/sentiment/data/vader_lexicon.txt",
+  "sha256": "…",            // optional; the gate enforces it if present
+  "license": "MIT"          // optional
+}
+```
+
+An Artifact node is **not implemented by writing code**. Its agent is given the
+`artifact_search` skill (`agent_harness/skills/artifact_search.md`) and a brief
+that says: find the canonical source, download the real file, verify it, place
+it at `path`, and write `<path>.provenance.json` (source URL, retrieval time,
+sha256, bytes, license). Differences from a code node:
+
+* the fence is exactly `path` and its `.provenance.json` sidecar, and the
+  added-lines budget is lifted (a published data file is thousands of lines);
+* the walk order comes from the edges (an Artifact has no dependencies of its
+  own, so it sorts with the leaves);
+* the **code-review stage is replaced** by a deterministic check — file
+  present, non-empty, sha256 matches if pinned — that is fail-closed like the
+  rest of the gate; the build/test commands still run;
+* a genuine blocker (source behind a login, no clean primary copy) is a
+  `HARNESS-PARTIAL(<node>)` marker in the provenance file, never a fabricated
+  data file.
+
+`--kind Artifact` / `--skip` / `--only` select them like any other node.
 
 ## Backends
 
@@ -360,8 +399,9 @@ Leaf functions stay on the cheap model; modules and named structural nodes get
 the expensive one.
 
 **5. Work the graph cannot express needs its own step.** The graph's vocabulary
-is `Module`/`Class`/`Function`, so build wiring, CLI flags and documentation had
-no node and were simply never attempted. Use `--pre-cmd` / `--post-cmd`:
+is `Module`/`Class`/`Function`/`Artifact`, so build wiring, CLI flags and
+documentation had no node and were simply never attempted. Use `--pre-cmd` /
+`--post-cmd`:
 
 ```bash
 ./graph_agent.py ... --pre-cmd 'git add -A && git commit -qm baseline' \
@@ -388,7 +428,8 @@ exercised for real rather than mocked.
 | `graph_agent.py` | thin entry point, nothing else |
 | `graphmodel.py` | the graph, dependency queries, walk order |
 | `languages.py` | per-language brief details + repo autodetection |
-| `references.py` | published reference resources: config parsing, `--fetch-refs` |
+| `references.py` | reference resources + Artifact-node acquisition: parsing, `--fetch-refs`, the sha256 check |
+| `skills.py` / `skills/` | instruction blocks pasted into a brief (`artifact_search`) |
 | `scope.py` | the fence: policy, resolution, audit |
 | `workspace.py` | git snapshot, change detection, revert, commit |
 | `context.py` | repo tree, symbol index, file bodies, plan excerpt |
@@ -397,7 +438,7 @@ exercised for real rather than mocked.
 | `backends.py` | opencode, OpenAI-compatible, llama-cli, dry-run |
 | `patchformat.py` | file-block protocol for non-agentic models |
 | `verify.py` / `review.py` | the two checks: build commands, and a second model on the diff |
-| `gate.py` | composes them into the one gate the traversal calls |
+| `gate.py` | composes them into the one gate the traversal calls (review → sha256 check for Artifact nodes) |
 | `state.py` / `runner.py` | resumable state, and the walk itself |
 | `cli.py` | argument parsing and wiring |
 
