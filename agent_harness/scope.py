@@ -112,6 +112,9 @@ class ScopeConfig:
     language: str | None = None
     #: published datasets a node's spec depends on; see references.py
     reference_resources: tuple[dict, ...] = ()
+    #: search engine for artifact/reference retrieval — a form endpoint taking
+    #: `q=`, or a URL template with `{query}`. Overridden by $HARNESS_SEARCH_URL.
+    search_url: str | None = None
 
     @classmethod
     def load(cls, path: str | Path | None) -> "ScopeConfig":
@@ -140,6 +143,7 @@ class ScopeConfig:
             verify=tuple(data.get("verify", ())),
             language=data.get("language"),
             reference_resources=tuple(data.get("reference_resources", ())),
+            search_url=data.get("search_url"),
         )
 
 
@@ -166,8 +170,12 @@ class ScopeResolver:
 
         patterns: list[str] = []
         patterns += list(nentry.get("allow", []))
-        patterns += list(mentry.get("allow", cfg.allow))
-        patterns += list(mentry.get("shared_allow", cfg.shared_allow))
+        if node.kind != KIND_ARTIFACT:
+            # An Artifact node only drops a data file at its own `path` — it has
+            # no business appending a `pub mod` line or a build-target, so the
+            # module allow-list and shared glue paths do not apply to it.
+            patterns += list(mentry.get("allow", cfg.allow))
+            patterns += list(mentry.get("shared_allow", cfg.shared_allow))
         patterns += list(nentry.get("allow_extra", []))
 
         allow: list[str] = []

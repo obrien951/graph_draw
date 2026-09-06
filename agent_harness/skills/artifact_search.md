@@ -1,19 +1,28 @@
 # Skill: search for and retrieve a published artifact
 
 You have been given an **Artifact** node. Your job is **acquisition, not
-implementation**: find the real, published file this node names, download it,
-verify it, place it exactly where the node says, and record where it came
-from. You are not writing code, not summarising the data, and not
-reconstructing it from memory — a hand-typed approximation of a published
-dataset is the exact failure this node type exists to prevent.
+implementation**: use a **search engine** to find the real, published file
+this node names, download it from its primary source, verify it, place it
+exactly where the node says, and record where it came from. You are not
+writing code, not summarising the data, and not reconstructing it from
+memory — a hand-typed approximation of a published dataset is the exact
+failure this node type exists to prevent.
 
-## 1. Identify the canonical source
+## 1. Search for it
 
-Work out what the artifact actually is from the node description, then find its
-**primary** home — in this order of trust:
+The brief gives you a search query (`find it by searching for: …`) and often a
+list of results the harness already ran. Start there:
+
+- Run the query in a search engine (your web-search tool; if you have none,
+  work from the harness's result list and the `pinned source hint` if given).
+- Refine the query if the results are weak — add the exact filename, the
+  author or project name, "raw", the file extension, "download".
+
+Then pick the **primary** source from the results, in this order of trust:
 
 1. The project or author's own repository / release page (GitHub releases, a
-   lab or university page, an official mirror named by the project).
+   lab or university page, an official mirror named by the project). For a
+   file on a GitHub/GitLab repo page, use the **raw** URL, not the HTML view.
 2. A recognised data registry or archive (Zenodo, the ACL Anthology, Hugging
    Face for models/datasets, data.gov, an RFC/ISO/Unicode publication page).
 3. A well-known redistribution used by the ecosystem (a language's package
@@ -21,12 +30,9 @@ Work out what the artifact actually is from the node description, then find its
    verbatim copy.
 
 Avoid: blog reposts, Stack Overflow pastes, random Gists, SEO "download"
-sites, anything that has visibly reformatted or "cleaned" the data. If two
-sources disagree on content, prefer the one closest to the author.
-
-Use your web-search and fetch tools for this. If the node or the harness
-brief already gives a `source:` URL, start there but still sanity-check it is
-the primary source and is still live.
+sites, wiki-summary sites (e.g. deepwiki), anything that has visibly
+reformatted or "cleaned" the data. If two sources disagree on content,
+prefer the one closest to the author.
 
 ## 2. Retrieve it
 
@@ -64,6 +70,7 @@ the primary source and is still live.
   ```json
   {
     "artifact": "<node name>",
+    "search_query": "<the query that found it>",
     "source_url": "<the URL you actually downloaded from>",
     "canonical_page": "<the human landing page, if different>",
     "retrieved_utc": "<ISO-8601 timestamp>",
@@ -75,7 +82,8 @@ the primary source and is still live.
   }
   ```
 
-- In your summary: the source, the sha256, the license, and any transform.
+- In your summary: the search query, the source, the sha256, the license, and
+  any transform.
 
 ## 5. If you genuinely cannot get it
 

@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,8 +28,10 @@ from agent_harness.graphmodel import Graph, LEAF_FIRST, ROOT_FIRST
 from agent_harness.patchformat import FileBlockApplier, parse_blocks
 from agent_harness.prompts import PromptBuilder, parse_review
 from agent_harness.gate import Gate
+from agent_harness import references
 from agent_harness.references import (
-    ReferenceResource, check_artifact, fetch as fetch_references, for_module, parse_all, sha256_of,
+    ReferenceResource, check_artifact, fetch as fetch_references, for_module, parse_all,
+    place_artifact, sha256_of, web_search,
 )
 from agent_harness.review import Reviewer
 from agent_harness.runner import Harness, HarnessOptions, ON_VIOLATION_RETRY, SafetyNetLost
@@ -400,12 +403,24 @@ ARTIFACT_GRAPH = {
     "nodes": [
         {"kind": "Artifact", "name": "vader_lexicon",
          "comment": "The VADER sentiment lexicon, tab-separated, ~7500 rows.",
-         "url": "https://example.invalid/vader_lexicon.txt",
+         "search": "VADER sentiment lexicon vader_lexicon.txt cjhutto raw",
          "path": "data/vader_lexicon.txt", "license": "MIT", "implemented": False},
         {"kind": "Module", "name": "sentiment", "comment": "scorer", "implemented": False},
     ],
     "edges": [{"origin": 1, "destination": 0, "comment": "depends on"}],
 }
+
+# A DuckDuckGo-lite-shaped results page: real links wrapped in /l/?uddg=…
+_DDG_LITE_HTML = """<html><body><table>
+<tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg={u1}&rut=x" class="result-link">GitHub blob</a></td></tr>
+<tr><td class="result-snippet">the lexicon file on GitHub</td></tr>
+<tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg={u2}&rut=y" class="result-link">the repo</a></td></tr>
+<tr><td><a href="//duckduckgo.com/settings">Settings</a></td></tr>
+<tr><td><a href="/lite/?q=next">Next Page</a></td></tr>
+</table></body></html>""".format(
+    u1="https%3A%2F%2Fgithub.com%2Fcjhutto%2FvaderSentiment%2Fblob%2Fmaster%2FvaderSentiment%2Fvader_lexicon.txt",
+    u2="https%3A%2F%2Fgithub.com%2Fcjhutto%2FvaderSentiment",
+)
 
 
 def _artifact_graph(tmp: Path, **node_overrides) -> Graph:
@@ -414,6 +429,120 @@ def _artifact_graph(tmp: Path, **node_overrides) -> Graph:
     p = tmp / "g.json"
     p.write_text(json.dumps(data))
     return Graph.load(p)
+
+
+_RAW_VADER_URL = ("https://raw.githubusercontent.com/cjhutto/vaderSentiment/"
+                  "master/vaderSentiment/vader_lexicon.txt")
+_VADER_BYTES = b"$:\t-1.5\t0.8\t[-1, -2]\nbest\t3.2\t0.4\t[3, 3, 3]\n"
+
+
+def _raises(*_a, **_k):
+    raise urllib.error.URLError("no network in tests")
+
+
+def _fake_http(*, html=_DDG_LITE_HTML, files=None, fail=()):
+    """A stand-in for references._http: serve `html` for the search engine
+    (POST), `files[url]` for a download (GET), raise for anything in `fail`."""
+    files = files or {_RAW_VADER_URL: _VADER_BYTES}
+
+    def _http(url, *, data=None, timeout=references._TIMEOUT):
+        if any(f in url for f in fail):
+            raise urllib.error.URLError(f"blocked: {url}")
+        if data is not None or "duckduckgo" in url:
+            return html.encode() if isinstance(html, str) else html
+        for known, body in files.items():
+            if url == known:
+                return body
+        raise urllib.error.URLError(f"404: {url}")
+    return _http
+
+
+class WebSearchTests(unittest.TestCase):
+    def test_parses_ddg_lite_html_and_unwraps_and_filters(self):
+        with patch.object(references, "_http", _fake_http()):
+            hits = web_search("vader lexicon", log=lambda _m: None)
+        urls = [h.url for h in hits]
+        self.assertIn("https://github.com/cjhutto/vaderSentiment/blob/master/"
+                      "vaderSentiment/vader_lexicon.txt", urls)
+        self.assertIn("https://github.com/cjhutto/vaderSentiment", urls)
+        self.assertFalse(any("duckduckgo.com" in u for u in urls))  # engine links dropped
+
+    def test_parses_searxng_json_when_the_engine_is_a_template(self):
+        payload = json.dumps({"results": [
+            {"url": "https://example.org/a.txt", "title": "A", "content": "…"},
+            {"url": "https://example.org/b", "title": "B"},
+        ]})
+        with patch.object(references, "_http", lambda url, **k: payload.encode()):
+            hits = web_search("q", engine="https://searx.test/search?q={query}&format=json",
+                              log=lambda _m: None)
+        self.assertEqual([h.url for h in hits],
+                         ["https://example.org/a.txt", "https://example.org/b"])
+
+    def test_search_fails_open(self):
+        with patch.object(references, "_http", _raises):
+            self.assertEqual(web_search("q", log=lambda _m: None), [])
+
+    def test_to_raw_url_rewrites_code_host_view_urls(self):
+        self.assertEqual(
+            references._to_raw_url("https://github.com/o/r/blob/main/a/b.txt"),
+            "https://raw.githubusercontent.com/o/r/main/a/b.txt")
+        self.assertEqual(
+            references._to_raw_url("https://gitlab.com/o/r/-/blob/main/b.txt"),
+            "https://gitlab.com/o/r/-/raw/main/b.txt")
+        self.assertEqual(references._to_raw_url("https://example.org/x.txt"),
+                         "https://example.org/x.txt")
+
+    def test_rank_prefers_basename_then_extension(self):
+        ranked = references._rank_candidates(
+            ["https://x/readme.md", "https://x/vader_lexicon.txt", "https://x/data.txt"],
+            "src/data/vader_lexicon.txt")
+        self.assertEqual(ranked[0], "https://x/vader_lexicon.txt")
+
+
+class ArtifactRetrievalTests(unittest.TestCase):
+    def test_fetch_searches_then_downloads_the_best_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            res = ReferenceResource(name="vader", search="vader lexicon",
+                                    path="src/data/vader_lexicon.txt")
+            with patch.object(references, "_http", _fake_http()):
+                out = fetch_references([res], root, root / ".h" / "refs", log=lambda _m: None)[0]
+        self.assertTrue(out.local_path)
+        self.assertEqual(out.source_url, _RAW_VADER_URL)     # blob url -> raw, downloaded
+        self.assertTrue(out.candidates)
+
+    def test_fetch_leaves_candidates_when_nothing_downloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            res = ReferenceResource(name="vader", search="vader lexicon",
+                                    path="src/data/vader_lexicon.txt")
+            with patch.object(references, "_http",
+                              _fake_http(fail=("githubusercontent", "github.com"))):
+                out = fetch_references([res], root, root / ".h" / "refs", log=lambda _m: None)[0]
+        self.assertEqual(out.local_path, "")
+        self.assertTrue(out.candidates)                      # brief still has somewhere to look
+
+    def test_place_artifact_writes_the_file_and_a_provenance_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            res = ReferenceResource(name="vader", search="vader lexicon",
+                                    path="src/data/vader_lexicon.txt", license="MIT")
+            with patch.object(references, "_http", _fake_http()):
+                out = place_artifact(res, root, root / ".h" / "refs", log=lambda _m: None)
+            f = root / "src/data/vader_lexicon.txt"
+            prov = root / "src/data/vader_lexicon.txt.provenance.json"
+            self.assertEqual(out.local_path, "src/data/vader_lexicon.txt")
+            self.assertEqual(f.read_bytes(), _VADER_BYTES)
+            doc = json.loads(prov.read_text())
+            self.assertEqual(doc["source_url"], _RAW_VADER_URL)
+            self.assertEqual(doc["search_query"], "vader lexicon")
+            self.assertEqual(doc["sha256"], sha256_of(f))
+            # idempotent: a second call must not re-download or rewrite
+            before = prov.read_text()
+            with patch.object(references, "_http", _raises):
+                again = place_artifact(res, root, root / ".h" / "refs", log=lambda _m: None)
+            self.assertEqual(again.local_path, "src/data/vader_lexicon.txt")
+            self.assertEqual(prov.read_text(), before)
 
 
 class ArtifactNodeTests(unittest.TestCase):
@@ -438,7 +567,8 @@ class ArtifactNodeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             g = _artifact_graph(Path(tmp), sha256="ABC123")
         res = ReferenceResource.from_node(g.find("vader_lexicon"))
-        self.assertEqual(res.url, "https://example.invalid/vader_lexicon.txt")
+        self.assertEqual(res.search, "VADER sentiment lexicon vader_lexicon.txt cjhutto raw")
+        self.assertEqual(res.query(), res.search)
         self.assertEqual(res.path, "data/vader_lexicon.txt")
         self.assertEqual(res.sha256, "abc123")
         self.assertEqual(res.license, "MIT")
@@ -450,6 +580,8 @@ class ArtifactNodeTests(unittest.TestCase):
         scope = ScopeResolver(g, ScopeConfig()).resolve(node)
         core = PromptBuilder(g).build(node, scope, sections=()).core
         self.assertIn("Artifact** node", core)
+        self.assertIn("with a search engine", core)
+        self.assertIn("find it by searching for: VADER sentiment lexicon", core)
         self.assertIn("search for and retrieve a published artifact", core)  # skill body
         self.assertIn("provenance.json", core)
         self.assertNotIn("DRY and SOLID", core)          # code-node section, not here
@@ -555,7 +687,7 @@ class ArtifactHarnessTests(unittest.TestCase):
         git(self.root, "commit", "-qm", "baseline")
         self.addCleanup(self.tmp.cleanup)
 
-    def _harness(self, script):
+    def _harness(self, script, **opt):
         graph = Graph.load(self.graph_path)
         config = ScopeConfig()
         backend = ScriptedBackend(self.root, script)
@@ -568,7 +700,8 @@ class ArtifactHarnessTests(unittest.TestCase):
             prompts=prompts, workspace=GitWorkspace(self.root, ignore=config.ignore),
             verifier=Verifier([], self.root), reviewer=Reviewer(None, prompts, self.root),
             state=RunState(state_dir / "state.json"), state_dir=state_dir,
-            options=HarnessOptions(order=ROOT_FIRST, attempts=2, on_violation=ON_VIOLATION_RETRY),
+            options=HarnessOptions(order=ROOT_FIRST, attempts=2,
+                                   on_violation=ON_VIOLATION_RETRY, **opt),
             log=lambda _m: None,
         ), graph
 
@@ -588,6 +721,27 @@ class ArtifactHarnessTests(unittest.TestCase):
         outcome = harness.run_node(graph.find("vader_lexicon"))
         self.assertEqual(outcome.status, FAILED)
         self.assertFalse(graph.find("vader_lexicon").implemented)
+
+    def test_fetch_refs_retrieves_the_artifact_by_search_before_the_agent_runs(self):
+        # the agent writes nothing; the search-and-place step alone satisfies it.
+        harness, graph = self._harness([{}, {}], fetch_refs=True)
+        with patch.object(references, "_http", _fake_http()):
+            outcome = harness.run_node(graph.find("vader_lexicon"))
+        self.assertEqual(outcome.status, DONE)
+        self.assertEqual((self.root / "data/vader_lexicon.txt").read_bytes(), _VADER_BYTES)
+        doc = json.loads((self.root / "data/vader_lexicon.txt.provenance.json").read_text())
+        self.assertEqual(doc["source_url"], _RAW_VADER_URL)
+
+    def test_fetch_refs_failing_open_puts_candidates_in_the_brief_for_the_agent(self):
+        harness, graph = self._harness([{
+            "data/vader_lexicon.txt": _VADER_BYTES.decode(),
+        }], fetch_refs=True)
+        with patch.object(references, "_http", _fake_http(fail=("github",))):
+            outcome = harness.run_node(graph.find("vader_lexicon"))
+        brief = (self.root / ".harness/work/vader_lexicon/brief.attempt1.md").read_text()
+        self.assertIn("Search results the harness already ran", brief)
+        self.assertIn("github.com/cjhutto/vaderSentiment", brief)
+        self.assertEqual(outcome.status, DONE)   # agent finished it from the candidates
 
 
 def _fake_ctags(tmp: Path, *, version_output: str, version_returncode: int = 0,

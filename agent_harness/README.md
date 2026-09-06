@@ -121,13 +121,14 @@ Two mechanisms push back:
    kind (or the config lists resources), the brief carries a "fetch it, do not
    reconstruct it from memory" rule, and the review pass gets a sixth check
    that rejects a hand-authored table standing in for a real file.
-2. **`reference_resources` in the scope config** names the real artefacts:
+2. **`reference_resources` in the scope config** names the real artefacts —
+   the intended field is `search`, a query, not a hard-coded URL:
 
    ```jsonc
    "reference_resources": [
      {
        "name": "VADER lexicon",
-       "url":  "https://raw.githubusercontent.com/cjhutto/vaderSentiment/master/vaderSentiment/vader_lexicon.txt",
+       "search": "vader_lexicon.txt cjhutto vaderSentiment raw github",
        "path": "src/sentiment/data/vader_lexicon.txt",
        "note": "tab-separated: token<TAB>mean<TAB>std<TAB>[raw ratings]",
        "modules": ["sentiment"]
@@ -136,10 +137,13 @@ Two mechanisms push back:
    ```
 
    Each entry is listed in the brief of every node it applies to (omit
-   `modules` for all). With `--fetch-refs` the harness downloads any entry that
-   has a URL and isn't already on disk into `<state-dir>/refs/` and hands the
-   node the local path. It fails open: an unreachable resource just stays a URL
-   in the brief. A module entry may carry its own `reference_resources` list.
+   `modules` for all). With `--fetch-refs` the harness **runs the query through
+   a search engine**, ranks the results, rewrites a GitHub/GitLab file page to
+   its raw URL, and downloads the best match into `<state-dir>/refs/`. It fails
+   open at every step: no search engine, no usable result, or a download that
+   403s just leaves the query and the candidate URLs in the brief for the
+   agent. A module entry may carry its own `reference_resources` list. A bare
+   `url` is still honoured (used as a single candidate).
 
 ## Artifact nodes
 
@@ -153,7 +157,7 @@ dependency. That node's `kind` is `Artifact`:
   "kind": "Artifact",
   "name": "vader_lexicon",
   "comment": "The VADER sentiment lexicon: token<TAB>mean<TAB>std<TAB>[raw ratings].",
-  "url": "https://raw.githubusercontent.com/cjhutto/vaderSentiment/master/vaderSentiment/vader_lexicon.txt",
+  "search": "vader_lexicon.txt cjhutto vaderSentiment VADER sentiment lexicon raw github",
   "path": "src/sentiment/data/vader_lexicon.txt",
   "sha256": "…",            // optional; the gate enforces it if present
   "license": "MIT"          // optional
@@ -162,20 +166,33 @@ dependency. That node's `kind` is `Artifact`:
 
 An Artifact node is **not implemented by writing code**. Its agent is given the
 `artifact_search` skill (`agent_harness/skills/artifact_search.md`) and a brief
-that says: find the canonical source, download the real file, verify it, place
-it at `path`, and write `<path>.provenance.json` (source URL, retrieval time,
-sha256, bytes, license). Differences from a code node:
+that says: run the search, pick the primary source from the results, download
+the real file, verify it, place it at `path`, and write
+`<path>.provenance.json` (search query, source URL, retrieval time, sha256,
+bytes, license). Differences from a code node:
 
-* the fence is exactly `path` and its `.provenance.json` sidecar, and the
-  added-lines budget is lifted (a published data file is thousands of lines);
-* the walk order comes from the edges (an Artifact has no dependencies of its
-  own, so it sorts with the leaves);
+* the fence is exactly `path` and its `.provenance.json` sidecar — no module
+  allow-list, no `src/lib.rs` — and the added-lines budget is lifted (a
+  published data file is thousands of lines);
+* the walk order comes from the edges, and an edge into an Artifact is always
+  ordered dependency-first (a file cannot be stubbed);
 * the **code-review stage is replaced** by a deterministic check — file
   present, non-empty, sha256 matches if pinned — that is fail-closed like the
   rest of the gate; the build/test commands still run;
 * a genuine blocker (source behind a login, no clean primary copy) is a
   `HARNESS-PARTIAL(<node>)` marker in the provenance file, never a fabricated
   data file.
+
+With `--fetch-refs` the harness runs each Artifact node's search **before the
+node's turn**, seeds the ranked results into the brief, and — when a result
+clearly matches — places the file at `path` with a provenance sidecar so the
+agent turn is a verification rather than a from-scratch download.
+
+`--search-url` (or `$HARNESS_SEARCH_URL`, or `"search_url"` in the scope
+config) swaps the engine: a form endpoint that takes `q=` (default: DuckDuckGo
+lite), or a URL template with `{query}` (a SearXNG `/search?…&format=json`
+instance works). `python -m agent_harness.references "<query>"` prints what a
+query returns, for tuning a graph's `search` strings by hand.
 
 `--kind Artifact` / `--skip` / `--only` select them like any other node.
 
@@ -428,7 +445,7 @@ exercised for real rather than mocked.
 | `graph_agent.py` | thin entry point, nothing else |
 | `graphmodel.py` | the graph, dependency queries, walk order |
 | `languages.py` | per-language brief details + repo autodetection |
-| `references.py` | reference resources + Artifact-node acquisition: parsing, `--fetch-refs`, the sha256 check |
+| `references.py` | reference resources + Artifact-node acquisition: the search engine, `--fetch-refs` retrieval, the sha256 check |
 | `skills.py` / `skills/` | instruction blocks pasted into a brief (`artifact_search`) |
 | `scope.py` | the fence: policy, resolution, audit |
 | `workspace.py` | git snapshot, change detection, revert, commit |

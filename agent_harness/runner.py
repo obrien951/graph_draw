@@ -22,6 +22,7 @@ from .context import RepoContext
 from .gate import REVIEW, VERIFY, Gate
 from .graphmodel import KIND_ARTIFACT, Graph, Node, ROOT_FIRST
 from .prompts import PromptBuilder, parse_noop_verdict
+from .references import ReferenceResource, place_artifact
 from .review import Reviewer
 from .scope import ScopeAuditor, ScopeResolver, Violation
 from .state import DONE, FAILED, NOOP, PARTIAL, RUNNING, SKIPPED, RunState
@@ -90,6 +91,11 @@ class HarnessOptions:
     noop_check: bool = False
     confirm_changes: bool = False
     fix_rounds: int = 0
+    #: run each Artifact node's `search` through a search engine before its
+    #: brief is built — seed the candidate URLs into the brief and, when one
+    #: clearly matches, place the file at its path with a provenance sidecar.
+    fetch_refs: bool = False
+    search_url: str | None = None
 
 
 @dataclass
@@ -655,6 +661,9 @@ class Harness:
             plan_path=self.options.plan_path,
             dir_of=lambda n: self.scopes.resolve(n).module_dir,
         )
+        artifact_resource = None
+        if node.kind == KIND_ARTIFACT and self.options.fetch_refs:
+            artifact_resource = self._retrieve_artifact(node)
         return self.prompts.build(
             node, scope, sections,
             stub_sites=self.stubs.sites_for(node.name),
@@ -663,7 +672,21 @@ class Harness:
             order_note=ORDER_NOTES.get(self.options.order, ""),
             allow_partial=self.options.allow_partial,
             existing_partial=existing_partial,
+            artifact_resource=artifact_resource,
         )
+
+    def _retrieve_artifact(self, node: Node) -> ReferenceResource:
+        """Search for the artifact and, when a result clearly matches, place it
+        at its path with a provenance sidecar — so the node's agent turn is a
+        verification, not a from-scratch download. Fails open: on no result the
+        resource just carries the query + candidates for the brief."""
+        res = ReferenceResource.from_node(node)
+        try:
+            return place_artifact(res, self.root, self.state_dir / "refs",
+                                  search_url=self.options.search_url, log=self.log)
+        except Exception as exc:  # noqa: BLE001 — retrieval must never break the walk
+            self.log(f"  artifact retrieval errored ({exc}); leaving it to the agent")
+            return res
 
     def _existing(self, paths: Sequence[str]) -> list[str]:
         return [p for p in paths if (self.root / p).is_file()]

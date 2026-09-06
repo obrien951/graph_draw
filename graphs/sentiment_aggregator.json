@@ -1,0 +1,242 @@
+{
+    "nodes": [
+        {
+            "kind": "Module",
+            "name": "config",
+            "comment": "Language: Rust 2021, standalone Cargo crate `sentiment_aggregator` (NOT C++ \u2014 ignore any C++/CMake examples in the harness brief). This module lives in `src/config/` and must append `pub mod config;` to `src/lib.rs`. It owns run configuration and CLI parsing and depends on no other crate module.\n\nDefine `pub struct Config` (validated, normalized run settings) and a `clap`-derive `pub struct Cli` that parses into it via `pub fn into_config(self) -> anyhow::Result<Config>`. Fields and defaults:\n- `source_db: PathBuf` \u2014 default `~/data/stocks_2026/stocks-commodities.sqlite` (expand `~`).\n- `out_db: PathBuf` \u2014 default `~/data/stocks_2026/stocks-commodities-sentiment.sqlite`.\n- `overwrite: bool` \u2014 recreate `out_db` from `source_db` even if it exists.\n- `from: chrono::NaiveDate` / `to: chrono::NaiveDate` \u2014 trading-date range; default is the min/max of `prices.date` in `source_db` intersected with `gdelt_floor`.\n- `lookback_days: u32` \u2014 default 3. A trading date D aggregates headlines published in `[D - lookback_days, D)`.\n- `symbols: SymbolSelector` \u2014 `--symbol` (repeatable), `--symbols-file` (one ticker per line), else the whole universe.\n- `min_market_cap: Option<f64>` \u2014 filter the universe by latest `prices.market_cap`.\n- `use_gdelt: bool` \u2014 default true.\n- `gdelt_floor: NaiveDate` \u2014 2017-01-01 (GDELT DOC 2.0 coverage start).\n- `lexicon_dir: Option<PathBuf>` \u2014 overrides the bundled sentiment lexicon (see the `sentiment` module).\n- `headlines_cache_dir: PathBuf` \u2014 env `HEADLINES_CACHE_DIR`, else `$XDG_CACHE_HOME/headlines`, else `~/.cache/headlines` (mirror `headlines-core::store::cache_dir`, provided as a caller-supplied context file).\n- `gdelt_cache_dir: PathBuf` \u2014 default `<headlines_cache_dir>/gdelt`.\n- `jobs: usize` \u2014 default `std::thread::available_parallelism()`.\n- `emit_mentions: bool` \u2014 also write the per-headline evidence table.\n- `force: bool` \u2014 ignore the resume log and recompute everything.\n\nAlso provide `pub const PUBLICATIONS: &[Publication]` with `pub struct Publication { pub display: &'static str, pub domain: &'static str }`, listing the 13 outlets from `~/Practice/build-headline-searchers.sh`: Barron's/barrons.com, Benzinga/benzinga.com, Bloomberg/bloomberg.com, Business Insider/businessinsider.com, CNBC/cnbc.com, Financial Post/financialpost.com, Financial Times/ft.com, MarketWatch/marketwatch.com, Reuters/reuters.com, The Economist/economist.com, The Globe and Mail/theglobeandmail.com, The Wall Street Journal/wsj.com (dedupe on domain). Validate `from <= to`, create the parent dir of `out_db`.",
+            "implemented": true,
+            "position": {
+                "x": 0.0,
+                "y": 240.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "tickers",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/tickers/`; append `pub mod tickers;` to `src/lib.rs`. Resolves a ticker symbol to the names a publication would actually use for the company, so headline matching can search for the company and not only the symbol. Depends on `config`.\n\nDefine `pub struct AliasSet { pub canonical: String, pub aliases: Vec<String>, pub ambiguous: bool }` and `pub struct SecurityAliases` wrapping `HashMap<String, AliasSet>` with `pub fn resolve(&self, symbol: &str) -> Option<&AliasSet>` and `pub fn build(cfg: &crate::config::Config, conn: &rusqlite::Connection) -> anyhow::Result<Self>` (conn is the source DB).\n\nSources, lowest precedence first:\n1. Bundled seed `pub const TICKER_NAMES: &[(&str, &str)]` \u2014 copy and extend the `COMPANY_NAMES` table from `~/Practice/headlines-core/src/keywords.rs` (a caller-supplied context file).\n2. Optional `--company-map <path>` (add the flag to `config`) in SEC `company_tickers.json` shape: a JSON object whose values are `{ \"cik_str\": <int>, \"ticker\": \"AAPL\", \"title\": \"Apple Inc.\" }`. Use it for the long tail.\n3. The symbol universe itself: `symbols` (`status='ok'`) and `edgar_symbols` (symbol\u2194cik) from the source DB tell you which symbols exist.\n\nAlias derivation: from a title like \"Apple Inc.\" produce both the full string and a suffix-stripped form (\"Apple\"). Strip one trailing corporate suffix from {Inc, Inc., Corp, Corp., Corporation, Co, Co., Company, Ltd, Ltd., LLC, L.P., LP, plc, PLC, N.V., NV, S.A., SA, AG, Holdings, Holding, Group}. Keep original casing here; matching lowercases later.\n\nAmbiguity: set `ambiguous = true` when the symbol is \u2264 2 characters, or the canonical/alias is a common English word or is in a bundled `pub const AMBIGUOUS_TICKERS: &[&str]` (e.g. A, ALL, ARE, CEO, DD, EAT, FAST, KEY, LOW, NOW, ON, SO, TWO, WELL, IT). Downstream code must then require a cashtag or a full-name hit. Symbols with no resolvable name are simply omitted from the map (the pipeline logs the count).",
+            "implemented": true,
+            "position": {
+                "x": 360.0,
+                "y": 40.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "sentiment",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/sentiment/`; append `pub mod sentiment;` to `src/lib.rs`. A deterministic, lexicon-based headline scorer producing the literature-style tone features. Depends on `config`.\n\nDefine `pub struct HeadlineSentiment { pub polarity: f64 /* -1..=1 */, pub pos: f64, pub neg: f64, pub neu: f64, pub uncertainty: f64, pub litigious: f64, pub strong_modal: f64, pub weak_modal: f64, pub subjectivity: f64, pub negations: u32, pub tokens: u32 }` and `pub fn score(text: &str, lex: &Lexicon) -> HeadlineSentiment`.\n\n`pub struct Lexicon` holds a valence map (`token -> f64` in roughly -4..=4, VADER-style) and the Loughran\u2013McDonald financial category word sets (negative, positive, uncertainty, litigious, strong-modal, weak-modal, constraining). `Lexicon::bundled()` loads the full published word lists with `include_str!(\"data/vader_lexicon.txt\")` and `include_str!(\"data/LoughranMcDonald_MasterDictionary.csv\")`. Those two files are placed by the `vader_lexicon` and `loughran_mcdonald` **Artifact** nodes \u2014 the harness retrieves them by running a search-engine query and downloading the real file from its primary source. Do NOT hand-write, seed, or approximate either list; if the file is missing, that is the Artifact node's job, not yours. `Lexicon::load_dir(path)` still lets `cfg.lexicon_dir` point at a newer copy at run time.\n\nScoring: Unicode word tokenization (`unicode-segmentation`), lowercase. Negation window \u2014 a token in {not, no, never, none, cannot, without, n't, hardly, barely, fails, failed} flips the sign of the next up to 3 sentiment-bearing tokens. Intensifiers {very, highly, sharply, significantly, deeply, surged} scale the next bearing token by 1.5; downtoners {slightly, somewhat, barely} by 0.6. Sum the (signed, scaled) valences, normalize by `sqrt(tokens.max(1))`, squash with `x / (x*x + 15).sqrt()` into -1..=1 for `polarity`. `pos/neg/neu` are token fractions; `uncertainty`, `litigious`, `strong_modal`, `weak_modal` are LM-category hits / tokens; `subjectivity` = (pos+neg)/tokens.",
+            "implemented": false,
+            "position": {
+                "x": 360.0,
+                "y": 240.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "schema",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/schema/`; append `pub mod schema;` to `src/lib.rs`. Owns the output database. Depends on `config`.\n\n`pub fn open_output(cfg: &crate::config::Config) -> anyhow::Result<rusqlite::Connection>`: if `out_db` is missing or `cfg.overwrite`, `std::fs::copy(&cfg.source_db, &cfg.out_db)` so the result is a byte-for-byte augmented copy of `stocks-commodities.sqlite`; open it with `rusqlite` (the crate already depends on `rusqlite` with the `bundled` feature); run `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`; `CREATE TABLE IF NOT EXISTS` the tables below; write `meta` keys `sentiment_build_started` (RFC3339 now), `sentiment_lexicon`, `sentiment_gdelt_from`.\n\nDDL (create exactly these):\n- `sentiment_publication_daily(symbol TEXT NOT NULL, date TEXT NOT NULL, publication TEXT NOT NULL, n_headlines INTEGER, n_matched INTEGER, polarity_mean REAL, polarity_wmean REAL, polarity_std REAL, pos_frac REAL, neg_frac REAL, neu_frac REAL, uncertainty_mean REAL, litigious_mean REAL, negation_rate REAL, novelty REAL, attention REAL, first_ts INTEGER, last_ts INTEGER, source_mix TEXT, PRIMARY KEY(symbol,date,publication)) WITHOUT ROWID;`\n- `sentiment_daily(symbol TEXT NOT NULL, date TEXT NOT NULL, n_publications INTEGER, n_headlines INTEGER, n_matched INTEGER, polarity REAL, polarity_std REAL, dispersion_across_pubs REAL, breadth REAL, bull_bear REAL, attention REAL, novelty REAL, lookback_days INTEGER, PRIMARY KEY(symbol,date)) WITHOUT ROWID;`\n- `sentiment_headline_mention(symbol TEXT NOT NULL, url TEXT NOT NULL, publication TEXT, title TEXT, published_ts INTEGER, trading_date TEXT, polarity REAL, weight REAL, matched_alias TEXT, source TEXT, PRIMARY KEY(symbol,url)) WITHOUT ROWID;` (populated only when `cfg.emit_mentions`)\n- `sentiment_ingest_log(symbol TEXT NOT NULL, date TEXT NOT NULL, publication TEXT NOT NULL, status TEXT, n_in INTEGER, updated_at TEXT, PRIMARY KEY(symbol,date,publication)) WITHOUT ROWID;`\n- Indices: `idx_spd_date` on `sentiment_publication_daily(date)`, `idx_sd_date` on `sentiment_daily(date)`.\n\nAlso provide transactional writer helpers with prepared-statement upserts: `PublicationDailyWriter`, `SecurityDailyWriter`, `MentionWriter`, and `IngestLog` with `fn done(&self, symbol: &str, date: NaiveDate, publication: &str) -> bool` and `fn record(&self, symbol: &str, date: NaiveDate, publication: &str, status: &str, n_in: u32)`. Each writer batches into one transaction and exposes `flush`.",
+            "implemented": false,
+            "position": {
+                "x": 360.0,
+                "y": 440.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "headlines",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/headlines/` with submodule files `mod.rs`, `model.rs`, `archive.rs`, `gdelt.rs`; append `pub mod headlines;` to `src/lib.rs`. Produces the raw headline stream for a security and time window, from two sources merged and de-duplicated by URL. Depends on `config` and `tickers`.\n\n`model.rs`: `pub struct Headline { pub title: String, pub url: String, pub description: Option<String>, pub published_ts: i64 /* unix seconds, UTC */, pub publication: &'static str /* domain */, pub source: Source }`, `pub enum Source { Archive, Gdelt }`.\n\n`archive.rs`: read `<cfg.headlines_cache_dir>/<domain>.jsonl` \u2014 one JSON object per line in the EXACT shape of `headlines-core`'s `store::Item` (`{ \"title\": .., \"link\": .., \"description\": ..?, \"published\": <i64 seconds> }`; see the caller-supplied `~/Practice/headlines-core/src/store.rs` and `feed.rs`). Parse tolerantly (skip malformed lines), keep rows whose `published` is inside the window.\n\n`gdelt.rs`: query GDELT DOC 2.0 \u2014 `GET https://api.gdeltproject.org/api/v2/doc/doc` with querystring `query = \"\\\"<canonical>\\\" OR \\\"<alias>\\\"\" + \" domainis:<domain>\"`, `mode=artlist`, `format=json`, `sort=datedesc`, `maxrecords=250`, `startdatetime` / `enddatetime` as `YYYYMMDDHHMMSS` UTC. Response JSON is `{ \"articles\": [ { \"url\", \"title\", \"seendate\" (\"YYYYMMDDTHHMMSSZ\"), \"domain\", \"language\", \"sourcecountry\" } ] }`. GDELT has a hard 250-row cap and NO pagination: whenever a slice returns exactly 250 rows, bisect that time slice and recurse, down to a 1-hour floor. Clamp `startdatetime` to `cfg.gdelt_floor`; if the whole window precedes the floor, return empty and log once. Politeness: \u2265 1s between requests, exponential backoff on HTTP 429/5xx, and cache every raw response body under `cfg.gdelt_cache_dir` keyed by a hash of (domain, query, start, end) so overlapping windows and re-runs cost nothing. Use `reqwest` blocking + `rustls-tls`, kept pinned at `reqwest = { version = \"0.12\", default-features = false, features = [\"blocking\", \"rustls-tls\", \"json\"] }` exactly as `~/Practice/headlines-core/Cargo.toml` has it \u2014 do not bump the version or rename the features. Keep a process-wide request/cache-hit counter for the run summary.\n\n`mod.rs` public API: `pub fn fetch(cfg: &Config, aliases: &AliasSet, symbol: &str, window: (i64, i64)) -> anyhow::Result<Vec<Headline>>` \u2014 iterate `config::PUBLICATIONS`, always run `archive`, run `gdelt` when `cfg.use_gdelt`, merge, dedupe by normalized URL (strip scheme, trailing slash, utm_* params), sort by `published_ts`.",
+            "implemented": false,
+            "position": {
+                "x": 720.0,
+                "y": 40.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "matching",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/matching/`; append `pub mod matching;` to `src/lib.rs`. Decides whether a `Headline` is actually about a given security and how strongly. Depends on `tickers` and `headlines`.\n\n`pub struct Mention { pub matched_alias: String, pub in_title: bool, pub weight: f64 }` and `pub fn match_headline(h: &crate::headlines::Headline, symbol: &str, aliases: &crate::tickers::AliasSet) -> Option<Mention>`.\n\nCheck `title` (hit weight 1.0) and `description` (description-only hit weight 0.5):\n- cashtag: `$SYMBOL`, case-insensitive, always accepted, weight 1.0.\n- bare ticker: `SYMBOL` as a whole uppercase token with word boundaries \u2014 accepted ONLY when `!aliases.ambiguous`.\n- canonical name or any alias as a case-insensitive, word-boundary phrase; an exact canonical-name hit outweighs a derived-alias hit. Reuse a word-boundary containment check equivalent to `headlines-core::matching::contains_word`.\nCombine to a final `weight` in `0.0..=1.5` (a name-in-title hit plus a cashtag may stack, capped at 1.5). Return `None` when the best weight is below `0.5`.\n\nAlso provide `pub fn mentions<'a>(headlines: &'a [Headline], symbol: &str, aliases: &AliasSet) -> Vec<(&'a Headline, Mention)>`.",
+            "implemented": false,
+            "position": {
+                "x": 1080.0,
+                "y": 40.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "features",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/features/`; append `pub mod features;` to `src/lib.rs`. Turns one security's matched, scored headlines into per-(trading date, publication) rows. Depends on `matching` and `sentiment`.\n\n`pub struct PublicationDaily { pub symbol: String, pub date: NaiveDate, pub publication: &'static str, pub n_headlines: u32, pub n_matched: u32, pub polarity_mean: f64, pub polarity_wmean: f64, pub polarity_std: f64, pub pos_frac: f64, pub neg_frac: f64, pub neu_frac: f64, pub uncertainty_mean: f64, pub litigious_mean: f64, pub negation_rate: f64, pub novelty: f64, pub attention: f64, pub first_ts: i64, pub last_ts: i64, pub source_mix: String /* json {\"archive\":n,\"gdelt\":m} */ }`.\n\n`pub fn compute(symbol: &str, from: NaiveDate, to: NaiveDate, lookback_days: u32, scored: &[(Headline, Mention, HeadlineSentiment)]) -> Vec<PublicationDaily>`:\n- A headline published at ts T contributes to every trading date D in `from..=to` with `D - lookback_days <= date_utc(T) < D` (so with `lookback_days > 1` a headline feeds several consecutive trading dates).\n- Bucket contributions by (D, publication). `polarity_mean` is the plain mean of headline `polarity`; `polarity_wmean` weights each by `Mention::weight`; `polarity_std` is the population std within the bucket (the tone-dispersion feature). `negation_rate` = mean `negations`/`tokens`.\n- Rolling novelty/attention over the trailing 30 calendar days for the same (symbol, publication), computed in one forward pass over sorted dates: `attention = n_matched(D) / (mean_daily_matched(trailing 30d) + 1.0)`; `novelty = 1 - max Jaccard(title 3-word shingles of D's headlines, shingles seen in the trailing 30d)`. With no prior history, `attention = 1.0` and `novelty = 1.0`.",
+            "implemented": false,
+            "position": {
+                "x": 1440.0,
+                "y": 140.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "aggregate",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/aggregate/`; append `pub mod aggregate;` to `src/lib.rs`. Collapses the per-publication rows for a (symbol, date) into one cross-publication row. Depends on `features`.\n\n`pub struct SecurityDaily { pub symbol: String, pub date: NaiveDate, pub n_publications: u32, pub n_headlines: u32, pub n_matched: u32, pub polarity: f64, pub polarity_std: f64, pub dispersion_across_pubs: f64, pub breadth: f64, pub bull_bear: f64, pub attention: f64, pub novelty: f64, pub lookback_days: u32 }`.\n\n`pub fn aggregate(rows: &[crate::features::PublicationDaily], lookback_days: u32) -> Vec<SecurityDaily>`: group by (symbol, date). Bundle `pub const PUBLICATION_WEIGHTS: &[(&str, f64)]` \u2014 a reach/reliability weight per domain (wire services and the majors reuters.com, wsj.com, bloomberg.com, ft.com near 1.0; aggregators such as benzinga.com, businessinsider.com nearer 0.5); default 0.6 for anything unlisted.\n- `polarity` = publication-weight-weighted mean of each row's `polarity_wmean`; `polarity_std` weighted likewise.\n- `dispersion_across_pubs` = weighted std of the per-publication `polarity_wmean` values (0.0 when only one publication covered the day) \u2014 this is the cross-outlet disagreement signal.\n- `breadth` = `n_publications as f64 / config::PUBLICATIONS.len() as f64`.\n- `bull_bear` = weighted mean of `pos_frac - neg_frac`.\n- `attention`, `novelty` = weighted means of the per-publication values.",
+            "implemented": false,
+            "position": {
+                "x": 1800.0,
+                "y": 140.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "pipeline",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. Lives in `src/pipeline/`; append `pub mod pipeline;` to `src/lib.rs`. The orchestrator. Depends on `config`, `tickers`, `schema`, `headlines`, `matching`, `features`, `aggregate`.\n\n`pub fn run(cfg: &crate::config::Config) -> anyhow::Result<Summary>`:\n1. Open `source_db` read-only and the output DB via `schema::open_output`.\n2. Resolve the symbol universe from `symbols` (`status='ok'`), applying `--symbol` / `--symbols-file` / `--min-market-cap` (latest `prices.market_cap`). Build `tickers::SecurityAliases`; drop symbols with no resolvable name and log the count. Clamp the date range to the `prices` date bounds.\n3. For each symbol, in parallel with `rayon` (`cfg.jobs`): compute the union window `[from - lookback_days, to]`; `headlines::fetch`; `matching::mentions`; score each matched headline with `sentiment::score` (build the `Lexicon` once and share `&Lexicon`); `features::compute`; `aggregate::aggregate`.\n   NOTE `rusqlite::Connection` is not `Sync`: give each rayon worker its own `Connection` to the output DB, or funnel finished rows through an `mpsc` channel to a single dedicated writer thread. Write `sentiment_publication_daily` + `sentiment_daily` (and `sentiment_headline_mention` when `cfg.emit_mentions`) in one transaction per symbol, then update `sentiment_ingest_log`.\n4. Resume: unless `cfg.force`, skip a (symbol, date, publication) already logged `ok` in `sentiment_ingest_log`.\n5. Progress: a periodic stderr line (symbols done/total, rows written, GDELT requests, cache hits) or `indicatif`. Write `meta` key `sentiment_build_finished` at the end.\n\n`pub struct Summary { pub symbols: usize, pub skipped: usize, pub publication_rows: usize, pub security_rows: usize, pub gdelt_requests: usize, pub gdelt_cache_hits: usize, pub elapsed: std::time::Duration }`.",
+            "implemented": false,
+            "position": {
+                "x": 2160.0,
+                "y": 240.0
+            }
+        },
+        {
+            "kind": "Module",
+            "name": "app",
+            "comment": "Language: Rust 2021, crate `sentiment_aggregator`. THE CRATE INTEGRATION ROOT ONLY. This node owns exactly `src/main.rs`, `src/lib.rs` and `Cargo.toml` \u2014 do NOT create or modify anything under `src/<module>/`, each of those directories belongs to its own node. Depends on `config`, `schema`, `pipeline`.\n\n`src/lib.rs`: make sure it declares `pub mod` for all nine modules (config, tickers, sentiment, schema, headlines, matching, features, aggregate, pipeline), add a crate-level `//!` doc comment describing the tool, and re-export the top-level surface: `pub use config::{Cli, Config}; pub use pipeline::{run, Summary};`.\n\n`src/main.rs`: a thin binary \u2014 initialise `env_logger`, parse `Cli` with `clap`, convert to `Config`, call `sentiment_aggregator::run(&cfg)`, print the `Summary` to stdout as a short human-readable report, and return `std::process::ExitCode::FAILURE` with the `anyhow` error chain on stderr on failure. No domain logic here.\n\nFinish by confirming `cargo build --all-targets` and `cargo test` are green for the whole crate.",
+            "implemented": false,
+            "position": {
+                "x": 2520.0,
+                "y": 240.0
+            }
+        },
+        {
+            "kind": "Artifact",
+            "name": "vader_lexicon",
+            "comment": "The VADER sentiment lexicon (Hutto & Gilbert, ICWSM 2014) \u2014 the file `vader_lexicon.txt` from the reference implementation `cjhutto/vaderSentiment`. One entry per line, tab-separated: `token<TAB>mean_valence<TAB>std_dev<TAB>[list of 10 raw human ratings]`. ~7500 tokens, mean valence roughly -4.0..+4.0. This is the `token -> f64` valence map the `sentiment` module's `Lexicon` is built from; download it verbatim, do not regenerate it.",
+            "search": "vader_lexicon.txt cjhutto vaderSentiment VADER sentiment lexicon raw github",
+            "path": "src/sentiment/data/vader_lexicon.txt",
+            "license": "MIT",
+            "implemented": false,
+            "position": {
+                "x": 360.0,
+                "y": 440.0
+            }
+        },
+        {
+            "kind": "Artifact",
+            "name": "loughran_mcdonald",
+            "comment": "The Loughran\u2013McDonald Master Dictionary \u2014 the financial sentiment word list from the University of Notre Dame (Loughran & McDonald, Journal of Finance 2011). CSV, one row per word, with per-category columns including Negative, Positive, Uncertainty, Litigious, Strong_Modal, Weak_Modal and Constraining (a non-zero year in a column means the word is in that category). This supplies the `sentiment` module's LM category word sets; download the current `Loughran-McDonald_MasterDictionary` CSV verbatim from the SRAF / Notre Dame distribution. The canonical distribution is SRAF / Notre Dame (sraf.nd.edu, \"Loughran-McDonald Master Dictionary\"); it is form/Drive-gated, so a verbatim mirror of that exact CSV is acceptable, but verify the column header matches the list above and the row count is ~86k. If no verbatim copy can be reached, a HARNESS-PARTIAL is the right answer \u2014 do not silently accept an unrelated fork.",
+            "search": "Loughran McDonald Master Dictionary CSV sraf notre dame financial sentiment word list download",
+            "path": "src/sentiment/data/LoughranMcDonald_MasterDictionary.csv",
+            "license": "CC-BY-NC 4.0 (Loughran-McDonald, U. of Notre Dame / SRAF)",
+            "implemented": false,
+            "position": {
+                "x": 360.0,
+                "y": 640.0
+            }
+        }
+    ],
+    "edges": [
+        {
+            "origin": 1,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 2,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 3,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 4,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 4,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 5,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 5,
+            "destination": 4,
+            "comment": "depends on"
+        },
+        {
+            "origin": 6,
+            "destination": 5,
+            "comment": "depends on"
+        },
+        {
+            "origin": 6,
+            "destination": 2,
+            "comment": "depends on"
+        },
+        {
+            "origin": 7,
+            "destination": 6,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 1,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 3,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 4,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 5,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 6,
+            "comment": "depends on"
+        },
+        {
+            "origin": 8,
+            "destination": 7,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 0,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 3,
+            "comment": "depends on"
+        },
+        {
+            "origin": 9,
+            "destination": 8,
+            "comment": "depends on"
+        },
+        {
+            "origin": 2,
+            "destination": 10,
+            "comment": "depends on"
+        },
+        {
+            "origin": 2,
+            "destination": 11,
+            "comment": "depends on"
+        }
+    ]
+}

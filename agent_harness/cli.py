@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import textwrap
@@ -77,10 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
                         "config's \"language\", else autodetected from the repo "
                         "(Cargo.toml -> rust, CMakeLists.txt -> c++, ...), else c++.")
     g.add_argument("--fetch-refs", action="store_true",
-                   help="before the walk, download every reference_resources entry that has "
-                        "a URL and isn't already on disk into <state-dir>/refs/, and hand "
-                        "each node the local path instead of only the URL. Fails open: an "
-                        "unreachable resource just stays a URL in the brief.")
+                   help="retrieve reference_resources and Artifact-node files by running "
+                        "their `search` query through a search engine, then downloading the "
+                        "best result (a bare `url` is used directly). Reference resources land "
+                        "in <state-dir>/refs/; an Artifact node's file is placed at its `path` "
+                        "with a provenance sidecar. Fails open — a failed search or download "
+                        "just leaves the query and candidate URLs in the brief for the agent.")
+    g.add_argument("--search-url", metavar="URL",
+                   help="search engine for --fetch-refs: a form endpoint taking `q=` "
+                        "(default: DuckDuckGo lite), or a URL template containing {query} "
+                        "(a SearXNG `/search?...&format=json` works). Also $HARNESS_SEARCH_URL "
+                        "or \"search_url\" in the scope config.")
 
     s = p.add_argument_group("selection")
     s.add_argument("--only", action="append", default=[], metavar="NAME",
@@ -357,6 +365,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = replace(config, ignore=tuple(dict.fromkeys(list(config.ignore) + list(language.ignore))))
 
     reference_resources = _reference_resources(config)
+    search_url = args.search_url or os.environ.get("HARNESS_SEARCH_URL") or config.search_url
 
     update_graph = not args.no_update_graph
     previewing = args.plan_only or args.backend == DRY_RUN
@@ -396,9 +405,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"graph : {args.graph} — {graph.summary()}")
     print(f"repo  : {root}")
     print(f"lang  : {language_id} ({lang_src})")
-    if reference_resources:
-        print(f"refs  : {len(reference_resources)} reference resource(s)"
-              f"{' — fetching' if args.fetch_refs else ''}")
+    n_artifacts = sum(1 for i in selection if graph.node(i).kind == "Artifact")
+    if reference_resources or n_artifacts:
+        bits = []
+        if reference_resources:
+            bits.append(f"{len(reference_resources)} reference resource(s)")
+        if n_artifacts:
+            bits.append(f"{n_artifacts} artifact node(s)")
+        suffix = ""
+        if args.fetch_refs:
+            engine = search_url or "duckduckgo lite"
+            suffix = f" — retrieving via search ({engine})"
+        print(f"refs  : {', '.join(bits)}{suffix}")
     print(f"order : {args.order} ({len(selection)} node(s) selected)")
     if cyclic:
         print(f"warning: {len(cyclic)} node(s) sit in a dependency cycle and were appended last: "
@@ -440,7 +458,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{position:3d}. {node.kind:8s} {node.name}")
             print(_wrap("scope", scope.allow or ["(none)"]))
             if node.kind == "Artifact":
-                src = node.raw.get("url") or node.comment.split("\n", 1)[0][:80] or "(unspecified)"
+                if node.raw.get("search"):
+                    src = f"search: {node.raw['search']}"
+                else:
+                    src = node.raw.get("url") or node.comment.split("\n", 1)[0][:80] or "(unspecified)"
                 print(_wrap("source", [src]))
             else:
                 todo = graph.unimplemented_dependencies(i)
@@ -477,12 +498,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     if reference_resources and args.fetch_refs and not previewing:
-        # Downloads to <state-dir>/refs/; each node's brief then names the local
-        # path (references.ReferenceResource.describe) so the agent reads the
-        # real file instead of the URL. Fails open — an unreachable resource
-        # stays a URL in the brief and the run continues.
+        # Search-discover then download each resource into <state-dir>/refs/;
+        # the brief then names the local path so the agent reads the real file
+        # instead of guessing. Artifact *nodes* are retrieved later, per node,
+        # in runner._retrieve_artifact. Fails open throughout.
         reference_resources = fetch_references(
-            reference_resources, root, state_dir / "refs", log=print)
+            reference_resources, root, state_dir / "refs", log=print, search_url=search_url)
 
     prompts = PromptBuilder(graph, language_hint=language_id,
                             reference_resources=reference_resources)
@@ -506,6 +527,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             noop_check=args.noop_check,
             confirm_changes=args.confirm_changes,
             fix_rounds=args.fix_rounds,
+            fetch_refs=args.fetch_refs and not previewing,
+            search_url=search_url,
         ),
         strong_backend=strong_backend,
         strong_nodes=tuple(args.strong_node),
@@ -518,6 +541,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                   "review_required": bool(args.require_review),
                   "language": language_id,
                   "reference_resources": [r.name for r in reference_resources],
+                  "fetch_refs": bool(args.fetch_refs and not previewing),
+                  "search_url": search_url or "duckduckgo-lite",
                   "verify": list(verify_cmds)}
     state.save()
 

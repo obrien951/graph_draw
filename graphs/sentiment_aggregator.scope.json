@@ -1,0 +1,85 @@
+{
+    "_comment": "Scope fence + build gate for graphs/sentiment_aggregator.json. Target repo: ~/code/stock_research_tools/sentiment_aggregator, a STANDALONE RUST 2021 CARGO CRATE (no C++/CMake). Each Module node is fenced to its own src/<module>/ directory; every node may also append its `pub mod` line to src/lib.rs and its dependency to Cargo.toml (shared_allow). The `app` node is the only one allowed to touch src/main.rs / src/lib.rs / Cargo.toml as its primary work and must not enter any src/<module>/ subdir. The gate is `cargo build --all-targets` then `cargo test`; a node is not marked implemented until both pass.",
+    "language": "rust",
+    "defaults": {
+        "allow": [
+            "{module_dir}/**"
+        ],
+        "max_files": 18,
+        "max_added_lines": 1700
+    },
+    "shared_allow": [
+        "src/lib.rs",
+        "Cargo.toml"
+    ],
+    "protected": [
+        "target/**",
+        "Cargo.lock",
+        "graphs/**",
+        "README.md",
+        "LICENSE"
+    ],
+    "ignore": [
+        "target/**",
+        "Cargo.lock",
+        "**/*.rs.bk",
+        ".harness/**",
+        "**/__pycache__/**"
+    ],
+    "modules": {
+        "config": {
+            "dir": "src/config"
+        },
+        "tickers": {
+            "dir": "src/tickers"
+        },
+        "sentiment": {
+            "dir": "src/sentiment",
+            "max_added_lines": 2200,
+            "note": "The full VADER and Loughran-McDonald word lists are placed under src/sentiment/data/ by the `vader_lexicon` and `loughran_mcdonald` Artifact nodes; this module `include_str!`s them and must NOT hand-write or trim them. Only this module's own .rs code counts toward the line budget."
+        },
+        "schema": {
+            "dir": "src/schema"
+        },
+        "headlines": {
+            "dir": "src/headlines",
+            "max_files": 22
+        },
+        "matching": {
+            "dir": "src/matching"
+        },
+        "features": {
+            "dir": "src/features"
+        },
+        "aggregate": {
+            "dir": "src/aggregate"
+        },
+        "pipeline": {
+            "dir": "src/pipeline",
+            "max_added_lines": 2000,
+            "max_files": 22
+        },
+        "app": {
+            "dir": "src",
+            "allow": [
+                "src/main.rs",
+                "src/lib.rs",
+                "Cargo.toml"
+            ],
+            "max_files": 3,
+            "note": "Integration root only. Never create or edit files under src/<module>/ \u2014 those belong to their own nodes."
+        }
+    },
+    "context_files": [
+        "/home/joe/Practice/HEADLINES.md",
+        "/home/joe/Practice/headlines-core/src/store.rs",
+        "/home/joe/Practice/headlines-core/src/feed.rs",
+        "/home/joe/Practice/headlines-core/src/keywords.rs",
+        "/home/joe/Practice/headlines-core/src/matching.rs"
+    ],
+    "verify": [
+        "cargo build --all-targets",
+        "cargo test"
+    ],
+    "_verify_comment": "Runs in the target repo after every node. `cargo build --all-targets` compiles the lib, the bin and the tests; `cargo test` runs whatever unit tests the node added. Deliberately no `cargo clippy -D warnings` gate \u2014 a local 30B model fails pedantic lints on nearly every node and it is not worth the retry cost."
+}

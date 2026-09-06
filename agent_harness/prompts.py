@@ -43,8 +43,9 @@ ARTIFACT_MISSION = """\
 # Acquire one graph node: {name}
 
 This is an **Artifact** node, not a code node. You are not writing an
-implementation — you are retrieving a real, published file that the rest of
-the build depends on, verifying it, and placing it where the graph says.
+implementation and you are NOT typing the data out from memory — you are
+finding a real, published file **with a search engine**, downloading it from
+its primary source, verifying it, and placing it where the graph says.
 
 ## The node
 kind          : {kind}
@@ -446,10 +447,12 @@ class PromptBuilder:
         order_note: str = "",
         allow_partial: bool = False,
         existing_partial: str | None = None,
+        artifact_resource: "ReferenceResource | None" = None,
     ) -> Brief:
         if node.kind == KIND_ARTIFACT:
             return self._artifact_brief(node, scope, sections, verify_cmds,
-                                        feedback, allow_partial, existing_partial)
+                                        feedback, allow_partial, existing_partial,
+                                        artifact_resource)
         deps = self.graph.dependencies(node.index)
         existing = [d for d in deps if d.implemented]
         missing = [d for d in deps if not d.implemented]
@@ -549,8 +552,9 @@ class PromptBuilder:
 
     def _artifact_brief(self, node: Node, scope: Scope, sections: Sequence[Section],
                         verify_cmds: Sequence[str], feedback: str,
-                        allow_partial: bool, existing_partial: str | None) -> Brief:
-        res = ReferenceResource.from_node(node)
+                        allow_partial: bool, existing_partial: str | None,
+                        resource: "ReferenceResource | None" = None) -> Brief:
+        res = resource or ReferenceResource.from_node(node)
         callers = self.graph.dependents(node.index)
         parts = [ARTIFACT_MISSION.format(
             name=node.name, kind=node.kind,
@@ -560,6 +564,23 @@ class PromptBuilder:
             resource=_indent(res.describe()),
             callers=_bullets([f"{c.name} ({c.kind}): {_one_line(c.comment)}" for c in callers]),
         )]
+
+        if res.local_path and res.local_path == res.path:
+            parts.append(
+                "## The harness already fetched this\n"
+                f"A search-engine run placed a copy at `{res.path}`"
+                + (f" (from {res.source_url})" if res.source_url else "")
+                + ". Your job is now to VERIFY it: open it, check the format and a "
+                "few entries against the description above, and confirm/complete "
+                f"`{res.path}.provenance.json`. If it is wrong or truncated, replace "
+                "it from the correct primary source. Do not blank it and retype it.")
+        elif res.candidates:
+            parts.append(
+                "## Search results the harness already ran\n"
+                f"Query: `{res.query()}`\n"
+                + "\n".join(f"  {i}. {u}" for i, u in enumerate(res.candidates, 1))
+                + "\n\nEvaluate these for the primary source and download from it. "
+                "If none is right, run your own search.")
 
         if existing_partial:
             parts.append(RESUME_PARTIAL.format(
@@ -574,15 +595,16 @@ class PromptBuilder:
         ]
         if res.sha256:
             items.append(f"Its sha256 is {res.sha256}.")
-        items.append(f"`{res.path or '<path>'}.provenance.json` records source URL, "
-                     "retrieval time, sha256, bytes and license.")
+        items.append(f"`{res.path or '<path>'}.provenance.json` records the search query, "
+                     "the source URL, retrieval time, sha256, bytes and license.")
         if verify_cmds:
             items.append("The project still builds — these pass: " + "; ".join(verify_cmds))
         if allow_partial:
             items.append(f"...or, if the file genuinely cannot be obtained, a "
                          f"`{partial_marker_for(node.name)}: <blocker>` marker in the "
                          f"provenance file says why — never a fabricated data file.")
-        items.append("Your summary names the source, the sha256, the license and any transform.")
+        items.append("Your summary names the search query, the source, the sha256, "
+                     "the license and any transform.")
         parts.append(ARTIFACT_DONE.format(items=_bullets(items)))
 
         if feedback:
