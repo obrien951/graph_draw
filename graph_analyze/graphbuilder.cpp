@@ -46,14 +46,64 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
         return n;
     };
 
+    // ── Resolve ambiguous module labels ──────────────────────────────────────
+    // A nested child module (Rust depth-1 src/ module) can legitimately share
+    // a bare label with another crate's same-named child (two crates each
+    // with their own src/config.rs) — ir::Module::parentLabel (empty for
+    // every top-level module, which is already globally unique by
+    // construction: a Cargo workspace can't have two crates of the same
+    // name, nor can a CMake tree have two targets of the same name) is the
+    // qualifying candidate, same pattern as Type::moduleLabel below. A no-op
+    // for every module whose label is already unique, which today is every
+    // existing fixture and the committed graphs/graph_draw.generated.json.
+    QVector<graph_lang::LabelResolver::Item> moduleItems;
+    moduleItems.reserve(repo.modules().size());
+    for (const ir::Module& m : repo.modules()) {
+        graph_lang::LabelResolver::Item item;
+        item.name = m.label;
+        QString qualified = m.parentLabel.isEmpty()
+                                 ? QString()
+                                 : m.parentLabel + QStringLiteral("::") + m.label;
+        if (qualified == m.label) qualified.clear();
+        item.candidates = { m.label, qualified };
+        moduleItems.append(item);
+    }
+    graph_lang::LabelResolver moduleResolver;
+    moduleResolver.observe(moduleItems);
+
+    // resolvedModuleLabel[i] is the label repo.modules().at(i) actually gets
+    // as a node. childResolvedByParentAndBare lets the parent->child "contains"
+    // edge below find its exact target without ambiguity, because at that
+    // point we already know the parent (its own bare label, always unique)
+    // and the child's bare label — no guessing needed, unlike a bare edge
+    // endpoint with no owner context. resolvedModuleForBare mirrors
+    // resolvedForBare below, for t.moduleLabel lookups that carry no crate
+    // context at all.
+    QVector<QString> resolvedModuleLabel;
+    resolvedModuleLabel.reserve(repo.modules().size());
+    QHash<QString, QString> childResolvedByParentAndBare;
+    QHash<QString, QStringList> resolvedModuleForBare;
+    for (int i = 0; i < moduleItems.size(); ++i) {
+        const ir::Module& m = repo.modules().at(i);
+        const QString resolved = moduleResolver.resolve(moduleItems.at(i));
+        resolvedModuleLabel.append(resolved);
+        if (!m.parentLabel.isEmpty())
+            childResolvedByParentAndBare.insert(
+                m.parentLabel + QLatin1Char('\x1f') + m.label, resolved);
+        QStringList& bucket = resolvedModuleForBare[m.label];
+        if (!bucket.contains(resolved)) bucket.append(resolved);
+    }
+
     // ── Nodes, in IR order: modules, then types, then functions ─────────────
     // First definition of a label wins, mirroring the original classByName
     // behaviour, so a duplicate never silently displaces the node edges point at.
     int mi = 0;
-    for (const ir::Module& m : repo.modules()) {
-        if (moduleNode.contains(m.label)) continue;
-        moduleNode.insert(m.label, addNode(NodeType::Module, m.label, m.description,
-                                           mi++, kModuleBand));
+    for (int i = 0; i < repo.modules().size(); ++i) {
+        const ir::Module& m = repo.modules().at(i);
+        const QString& label = resolvedModuleLabel.at(i);
+        if (moduleNode.contains(label)) continue;
+        moduleNode.insert(label, addNode(NodeType::Module, label, m.description,
+                                         mi++, kModuleBand));
     }
 
     // ── Resolve ambiguous type labels (B8) ───────────────────────────────────
@@ -69,9 +119,28 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
     for (const ir::Type& t : repo.types()) {
         graph_lang::LabelResolver::Item item;
         item.name = t.label;
-        QString qualified = t.moduleLabel.isEmpty()
+        // Qualify with the owning module's exact RESOLVED label, not its
+        // bare t.moduleLabel — if the owning module is itself an ambiguous
+        // nested module (two crates each with their own "config"),
+        // qualifying with the bare name would produce the identical
+        // candidate string for both types ("config::Settings" twice) and
+        // they'd collapse back into one node. t.ownerCrate (set only when
+        // moduleLabel names a nested module) plus the parent/child map built
+        // above gives an EXACT lookup — not a guess — for which of
+        // possibly-several same-named modules this specific type belongs
+        // to. Falls back to the bare qualifier when ownerCrate is empty
+        // (C++, or a type owned directly by a crate root — both already
+        // unambiguous), matching pre-existing behavior exactly.
+        QString ownerLabel = t.moduleLabel;
+        if (!t.ownerCrate.isEmpty()) {
+            const QString key = t.ownerCrate + QLatin1Char('\x1f') + t.moduleLabel;
+            const auto it = childResolvedByParentAndBare.constFind(key);
+            if (it != childResolvedByParentAndBare.constEnd())
+                ownerLabel = it.value();
+        }
+        QString qualified = ownerLabel.isEmpty()
                                  ? QString()
-                                 : t.moduleLabel + QStringLiteral("::") + t.label;
+                                 : ownerLabel + QStringLiteral("::") + t.label;
         if (qualified == t.label) qualified.clear();
         item.candidates = { t.label, qualified };
         typeItems.append(item);
@@ -138,17 +207,28 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
     // module, so there's no bare-edge-endpoint ambiguity to solve here —
     // just the node-identity collision.
     QVector<graph_lang::LabelResolver::Item> freeFnItems;
-    for (const ir::Module& m : repo.modules())
+    for (int i = 0; i < repo.modules().size(); ++i) {
+        const ir::Module& m = repo.modules().at(i);
+        // Qualify with THIS module's own resolved label (resolvedModuleLabel,
+        // computed above from the exact Module instance at index i), not its
+        // bare m.label — each module instance is already known exactly here,
+        // unlike a Type whose moduleLabel is only a bare string with no
+        // index of its own. Using the bare label would make two different
+        // crates' same-named "config" modules produce the identical
+        // qualified candidate for each of their functions and collapse them
+        // right back together, the same bug this was just fixed for Types.
+        const QString& ownerLabel = resolvedModuleLabel.at(i);
         for (const ir::Function& f : m.freeFunctions) {
             graph_lang::LabelResolver::Item item;
             item.name = f.label;
-            QString qualified = m.label.isEmpty()
+            QString qualified = ownerLabel.isEmpty()
                                      ? QString()
-                                     : m.label + QStringLiteral("::") + f.label;
+                                     : ownerLabel + QStringLiteral("::") + f.label;
             if (qualified == f.label) qualified.clear();
             item.candidates = { f.label, qualified };
             freeFnItems.append(item);
         }
+    }
     graph_lang::LabelResolver freeFnResolver;
     freeFnResolver.observe(freeFnItems);
 
@@ -195,6 +275,19 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
         return typeNode.value(candidates.first());
     };
 
+    // Same idea for ir::Type::moduleLabel, which also carries no crate
+    // context — it names a module by bare label only. Unambiguous in every
+    // repo that has no same-named-nested-module collision (resolves exactly
+    // as before); ambiguous only in the one case two crates each have a
+    // same-named child module AND both have a type owned by it, where the
+    // "module -> class contains" edge is dropped rather than guessed at,
+    // same philosophy as everywhere else in this file.
+    auto moduleNodeForBareLabel = [&](const QString& bare) -> GraphNode* {
+        const QStringList candidates = resolvedModuleForBare.value(bare);
+        if (candidates.size() != 1) return nullptr;
+        return moduleNode.value(candidates.first());
+    };
+
     // ── Edges ───────────────────────────────────────────────────────────────
     // An endpoint that resolves to no node is silently dropped. That is what
     // reproduces the original "only link a base class that is itself a node"
@@ -217,11 +310,19 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
 
     for (int i = 0; i < repo.modules().size(); ++i) {
         const ir::Module& m = repo.modules().at(i);
-        GraphNode* mn = moduleNode.value(m.label);
+        GraphNode* mn = moduleNode.value(resolvedModuleLabel.at(i));
 
-        // module -> module "contains" (nested modules)
-        for (const QString& child : m.childModuleLabels)
-            connect(mn, moduleNode.value(child), kContains);
+        // module -> module "contains" (nested modules). m.label is this
+        // module's own bare label — always unique, since only a NESTED
+        // child ever sets parentLabel, and a module with children is by
+        // definition a top-level one. Looking the child up by
+        // (this exact parent, child's bare name) sidesteps the ambiguity a
+        // plain bare lookup would hit when two crates share a child name.
+        for (const QString& child : m.childModuleLabels) {
+            const QString key = m.label + QLatin1Char('\x1f') + child;
+            const QString resolvedChild = childResolvedByParentAndBare.value(key, child);
+            connect(mn, moduleNode.value(resolvedChild), kContains);
+        }
 
         // module -> function "contains" (free functions; Rust reuses the label
         // rather than introducing a sixth one)
@@ -237,8 +338,21 @@ void GraphBuilder::build(const ir::Repo& repo, GraphScene* scene) const
         const ir::Type& t = repo.types().at(i);
         GraphNode* tn = typeNode.value(resolvedTypeLabel.at(i));
 
-        // module -> class "contains"
-        connect(moduleNode.value(t.moduleLabel), tn, kContains);
+        // module -> class "contains". Same exact (ownerCrate, moduleLabel)
+        // lookup as the candidate-building pass above — not the bare-label
+        // ambiguity-drop fallback — so a type owned by an ambiguous nested
+        // module still finds its own specific module, not "whichever one
+        // wasn't ambiguous" or nothing at all.
+        GraphNode* ownerNode = nullptr;
+        if (!t.ownerCrate.isEmpty()) {
+            const QString key = t.ownerCrate + QLatin1Char('\x1f') + t.moduleLabel;
+            const auto it = childResolvedByParentAndBare.constFind(key);
+            if (it != childResolvedByParentAndBare.constEnd())
+                ownerNode = moduleNode.value(it.value());
+        } else {
+            ownerNode = moduleNodeForBareLabel(t.moduleLabel);
+        }
+        connect(ownerNode, tn, kContains);
 
         // class -> function "provides"
         for (const ir::Function& f : resolvedMethods.at(i))

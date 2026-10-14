@@ -34,15 +34,26 @@ QString normalizeCrateName(const QString& name)
     return n.replace(QLatin1Char('-'), QLatin1Char('_'));
 }
 
-// Types and free functions are merged/deduped per (owning module, bare
-// label), never by bare label alone — two crates each with a struct Error,
-// or a crate root and one of its own child modules each with a fn of the
-// same name, are unrelated items that must stay unrelated. '\x1f' can't
-// appear in either half, same separator convention GraphBuilder uses for
-// its own composite edge keys.
-QString itemKey(const QString& ownerModule, const QString& label)
+// Types and free functions are merged/deduped per (owning crate, owning
+// module, bare label), never by bare label alone, and never by (module,
+// label) alone either — a module's bare name (e.g. "config") is only unique
+// *within* a crate, not across the repo, since two different crates can each
+// have their own depth-1 src/config.rs. '\x1f' can't appear in any part,
+// same separator convention GraphBuilder uses for its own composite edge
+// keys.
+QString itemKey(const QString& ownerCrate, const QString& ownerModule, const QString& label)
 {
-    return ownerModule + QLatin1Char('\x1f') + label;
+    return ownerCrate + QLatin1Char('\x1f') + ownerModule + QLatin1Char('\x1f') + label;
+}
+
+// A module's bare label is only unique within its own crate (two crates can
+// each have a child module named "config"), so the index that lets the
+// file-scan pass find "the module this file belongs to" must be keyed the
+// same crate-qualified way, or two crates' same-named child modules would
+// alias to whichever one was inserted last.
+QString moduleKey(const QString& ownerCrate, const QString& moduleBareLabel)
+{
+    return ownerCrate + QLatin1Char('\x1f') + moduleBareLabel;
 }
 
 struct CrateInfo {
@@ -193,22 +204,16 @@ bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* 
         crateByNormalizedName.insert(normalizeCrateName(c.name), c.name);
 
     // Module index as each module lands in repo->modules(), kept so the
-    // file-scan pass below can append free functions without a second
-    // lookup mechanism.
+    // file-scan pass below can append free functions without a second lookup
+    // mechanism. Keyed by (owning crate, bare module label) — a bare module
+    // name like "config" is only unique within its own crate.
     QHash<QString, int> moduleIndexByLabel;
-
-    // Every module label that belongs to a given crate (the crate's own root
-    // plus its depth-1 children) — how `use` resolution below decides whether
-    // a path could plausibly name something in "this crate" versus a
-    // different one entirely.
-    QHash<QString, QStringList> modulesOfCrate;
 
     for (const CrateInfo& c : crates) {
         ir::Module module;
         module.label             = c.name;
         module.description       = QString("Rust crate: %1").arg(c.name);
         module.childModuleLabels = nestedModuleNames(index, c.dir);
-        modulesOfCrate.insert(c.name, QStringList{c.name} + module.childModuleLabels);
 
         QSet<QString> deps;
         for (const QString& candidate : dependencyCandidates(c.doc, workspaceDeps)) {
@@ -224,14 +229,15 @@ bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* 
         module.dependsOnLabels = depList;
 
         repo->addModule(module);
-        moduleIndexByLabel.insert(module.label, repo->modules().size() - 1);
+        moduleIndexByLabel.insert(moduleKey(c.name, module.label), repo->modules().size() - 1);
 
         for (const QString& childName : module.childModuleLabels) {
             ir::Module child;
             child.label       = childName;
             child.description = QString("Rust module: %1").arg(childName);
+            child.parentLabel = c.name;
             repo->addModule(child);
-            moduleIndexByLabel.insert(child.label, repo->modules().size() - 1);
+            moduleIndexByLabel.insert(moduleKey(c.name, childName), repo->modules().size() - 1);
         }
     }
 
@@ -266,39 +272,50 @@ bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* 
         }
     }
 
-    // Types/methods merge by (owning module, label), not label alone — an
-    // impl in one file for a struct declared in another *file of the same
-    // module* is the normal shape for a trait + its impls living alongside
-    // each other and still merges; the same bare name in a different module
-    // (a different crate, or a crate root vs. its own child module) is an
-    // unrelated item and must not merge, which plain by-label keying got
-    // wrong (see R4.5 in RUST_GRAPH_PLAN.md).
+    // Types/methods merge by (owning crate, owning module, label), not label
+    // alone and not (module, label) alone either — a module's bare name is
+    // only unique within its own crate, so two crates each with their own
+    // "config" child module must never merge each other's same-named types.
+    // An impl in one file for a struct declared in another *file of the same
+    // module of the same crate* is still the normal shape for a trait + its
+    // impls living alongside each other, and still merges correctly.
     QHash<QString, int>             typeIndexByKey;
     QHash<int, QSet<QString>>       typesTouchedByFile;  // fileScans index -> composite keys
-    QSet<QString>                   functionKeysSeen;    // composite (module, label) dedup
-    // bare label -> every (ownerModule) that declared it, for `use`
-    // resolution below: a `use` path only ever names something in the
-    // writer's own crate, never a sibling crate's unrelated same-named item,
-    // so resolution must search within modulesOfCrate(this file's crate),
-    // not globally.
-    QHash<QString, QVector<QString>> moduleOwnersByBareLabel;
+    QSet<QString>                   functionKeysSeen;    // composite (crate, module, label) dedup
+
+    // bare label -> every (ownerCrate, ownerModule) that declared it, for
+    // `use` resolution below: a `use` path only ever names something in the
+    // writer's own crate, never a sibling crate's unrelated same-named item
+    // — including when that sibling crate's module happens to share the same
+    // bare name (two crates each with their own "config"), so matching must
+    // be by crate identity, not by module bare-name membership.
+    struct ModuleOwner { QString crate; QString module; };
+    QHash<QString, QVector<ModuleOwner>> moduleOwnersByBareLabel;
 
     for (int fi = 0; fi < fileScans.size(); ++fi) {
         const FileScan& scan = fileScans.at(fi);
         QSet<QString>& touched = typesTouchedByFile[fi];
 
         for (const RustFileItems::Type& t : scan.items.types) {
-            const QString key = itemKey(scan.ownerModule, t.label);
+            const QString key = itemKey(scan.ownerCrate, scan.ownerModule, t.label);
             int idx;
             const auto it = typeIndexByKey.constFind(key);
             if (it == typeIndexByKey.constEnd()) {
                 ir::Type nt;
                 nt.label       = t.label;
                 nt.moduleLabel = scan.ownerModule;
+                // Only set when the owner is a NESTED module (not the crate
+                // root) — a bare crate name is already globally unique, so
+                // tagging it here would be noise, and GraphBuilder's
+                // disambiguation path specifically looks for this to mean
+                // "moduleLabel might collide with another crate's module of
+                // the same name."
+                if (scan.ownerModule != scan.ownerCrate)
+                    nt.ownerCrate = scan.ownerCrate;
                 repo->addType(nt);
                 idx = repo->types().size() - 1;
                 typeIndexByKey.insert(key, idx);
-                moduleOwnersByBareLabel[t.label].append(scan.ownerModule);
+                moduleOwnersByBareLabel[t.label].append({scan.ownerCrate, scan.ownerModule});
             } else {
                 idx = it.value();
             }
@@ -330,12 +347,13 @@ bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* 
             }
         }
 
-        if (!moduleIndexByLabel.contains(scan.ownerModule))
+        const QString ownerKey = moduleKey(scan.ownerCrate, scan.ownerModule);
+        if (!moduleIndexByLabel.contains(ownerKey))
             continue; // defensive: every owner this pass produces was just added above
-        ir::Module& ownerModule = repo->modules()[moduleIndexByLabel.value(scan.ownerModule)];
+        ir::Module& ownerModule = repo->modules()[moduleIndexByLabel.value(ownerKey)];
         for (const RustFileItems::Item& fn : scan.items.functions) {
-            const QString fnKey = itemKey(scan.ownerModule, fn.label);
-            if (functionKeysSeen.contains(fnKey)) continue; // first definition wins, per-module
+            const QString fnKey = itemKey(scan.ownerCrate, scan.ownerModule, fn.label);
+            if (functionKeysSeen.contains(fnKey)) continue; // first definition wins, per-crate-per-module
             functionKeysSeen.insert(fnKey);
             ir::Function f;
             f.label = fn.label;
@@ -351,25 +369,27 @@ bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* 
     // every type a file declares or implements is considered to use whatever
     // repo-defined type any of that file's `use` paths named. A `use` path
     // only ever names something in the writer's own crate (an unqualified
-    // leaf can't reach into a sibling crate), so resolution is scoped to
-    // modulesOfCrate(scan.ownerCrate), not the whole repo: a bare label that
-    // resolves to exactly one module within this crate is accepted; one
-    // that's only defined in some other crate is external and dropped (same
-    // as before); one that's ambiguous even within this single crate (two of
-    // its own modules both declaring the same bare name, and the `use` path
-    // too short to say which) is dropped rather than guessed at — the same
-    // "don't resolve what you can't" philosophy as every other label here.
+    // leaf can't reach into a sibling crate), so resolution is scoped by
+    // crate IDENTITY, not by module bare-name membership — two crates can
+    // each have a module bare-named "config", so "is this owner's module
+    // name one of my crate's module names" is not a safe test; "is this
+    // owner's crate my crate" is. A bare label that resolves to exactly one
+    // module within this crate is accepted; one that's only defined in some
+    // other crate is external and dropped (same as before); one that's
+    // ambiguous even within this single crate (two of its own modules both
+    // declaring the same bare name, and the `use` path too short to say
+    // which) is dropped rather than guessed at — the same "don't resolve
+    // what you can't" philosophy as every other label here.
     for (int fi = 0; fi < fileScans.size(); ++fi) {
         const FileScan& scan = fileScans.at(fi);
-        const QStringList crateModules = modulesOfCrate.value(scan.ownerCrate);
 
         QSet<QString> resolvedUses; // bare labels, unambiguous within this crate
         for (const QString& path : scan.items.usePaths) {
             const auto it = moduleOwnersByBareLabel.constFind(path);
             if (it == moduleOwnersByBareLabel.constEnd()) continue;
             int matches = 0;
-            for (const QString& owner : it.value())
-                if (crateModules.contains(owner)) ++matches;
+            for (const ModuleOwner& owner : it.value())
+                if (owner.crate == scan.ownerCrate) ++matches;
             if (matches == 1) resolvedUses.insert(path);
         }
         if (resolvedUses.isEmpty()) continue;

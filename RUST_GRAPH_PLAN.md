@@ -2,7 +2,7 @@
 
 Resume: `claude --resume debecc96-6d9f-404b-90d4-3b3159838bca`
 
-## Status (2026-10-14): R1–R6 complete
+## Status (2026-10-14): R1–R6 complete, no known limitations remaining
 
 All six tasks below are done, verified by independent build+test runs and
 real end-to-end smoke tests against synthetic Cargo workspaces, not just by
@@ -10,12 +10,21 @@ the dispatched agents' own say-so. `repo_to_graph --lang rust <repo> [out]`
 works, including `--merge`/`--dry-run`. One task (R4.5) was added mid-stream
 when R4 surfaced a correctness bug upstream of it.
 
-**One known remaining limitation:** two different crates each having a child
-module with the same name (e.g. both with `src/config.rs`) still collide into
-one node, because `ir::Module` has no field recording a child module's owning
-crate the way `Type::moduleLabel` does for types. Fixing it needs a new IR
-field touching every analyzer (C++ and Rust both), which was deliberately left
-out of this effort's scope.
+**The one limitation this file used to document here — two different crates
+each having a child module with the same name (e.g. both with
+`src/config.rs`) colliding into one node — is now fixed.** `ir::Module`
+gained a `parentLabel` field (empty for every top-level module, set to the
+owning crate's name for a nested child) and `ir::Type` gained `ownerCrate`
+(set only when its owning module is a nested one, since a bare crate name is
+already unique on its own). `GraphBuilder` uses these for an exact lookup —
+not a guess — when a type or free function's owning module might itself be
+ambiguous, rather than the "drop the edge" fallback used for genuinely
+unresolvable bare labels elsewhere in that file. Verified both by a hand-built
+`GraphBuilder` test and an end-to-end `RustAnalyzer` test building two real
+crates that each have their own `src/config.rs`, each with its own `Settings`
+struct and `load()` function — both now come out as fully distinct, correctly
+owned nodes with correct docs and edges, confirmed by running the actual
+`repo_to_graph` CLI against that workspace, not just unit tests.
 
 **Bottom line up front:** almost all the hard parsing work for Rust already
 exists and passes its tests. The thing standing between you and a working

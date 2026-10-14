@@ -32,7 +32,19 @@ struct Function {
 struct Type {
     QString           label;
     QString           description;
-    QString           moduleLabel;    // owning module, by label
+    QString           moduleLabel;    // owning module, by BARE label
+    QString           ownerCrate;     // which crate moduleLabel's module lives
+                                      // in, when that matters: empty for C++
+                                      // and for any type owned directly by a
+                                      // crate root (already unambiguous).
+                                      // Only set when moduleLabel names a
+                                      // NESTED module, because a nested
+                                      // module's bare name (e.g. "config")
+                                      // is only unique within its own crate —
+                                      // two crates can each have their own —
+                                      // so this is what lets a consumer tell
+                                      // two same-named-module-owned types
+                                      // apart instead of merging them.
     QStringList       baseLabels;     // -> "inherits"
     QStringList       usesLabels;     // -> "uses"
     QVector<Function> methods;        // -> "provides"
@@ -43,6 +55,16 @@ struct Type {
 struct Module {
     QString           label;
     QString           description;
+    QString           parentLabel;        // owning module, by label; empty for
+                                           // every top-level module (a crate, a
+                                           // CMake target), which is already
+                                           // globally unique by construction.
+                                           // Only a nested child (Rust depth-1
+                                           // src/ module) sets this — it's what
+                                           // lets two different crates each
+                                           // have a same-named child module
+                                           // (e.g. both with src/config.rs)
+                                           // disambiguate instead of colliding.
     QStringList       dependsOnLabels;    // -> "depends on"
     QStringList       childModuleLabels;  // -> "contains" (nested modules)
     QVector<Function> freeFunctions;      // -> "contains" (Rust reuses the label)

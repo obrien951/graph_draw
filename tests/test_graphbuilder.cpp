@@ -475,6 +475,89 @@ TEST_CASE("Builder disambiguates two types that share a bare label (B8)",
     CHECK_FALSE(hasEdge(scene, "other", "core::Widget"));
 }
 
+TEST_CASE("Builder disambiguates nested modules of the same name across crates, "
+          "and the types/functions they own", "[graphbuilder]")
+{
+    // The one limitation RUST_GRAPH_PLAN.md used to document as unfixed: two
+    // crates each with their own depth-1 nested module of the same bare name
+    // (e.g. both with src/config.rs), each in turn owning a type and a free
+    // function that ALSO share a bare name. This is strictly harder than the
+    // "two types share a bare label" case above: the owning module itself is
+    // ambiguous, so a type's bare moduleLabel ("config") can't say by itself
+    // which crate's config it means — that's what ir::Type::ownerCrate and
+    // ir::Module::parentLabel exist to resolve exactly, not by guessing.
+    ir::Repo repo;
+
+    ir::Module crateA;
+    crateA.label             = QStringLiteral("crateA");
+    crateA.childModuleLabels = { QStringLiteral("config") };
+    repo.addModule(crateA);
+
+    ir::Module crateB;
+    crateB.label             = QStringLiteral("crateB");
+    crateB.childModuleLabels = { QStringLiteral("config") };
+    repo.addModule(crateB);
+
+    ir::Function loadA;
+    loadA.label       = QStringLiteral("load");
+    loadA.description = QStringLiteral("A's loader");
+    ir::Module configA;
+    configA.label       = QStringLiteral("config");
+    configA.parentLabel = QStringLiteral("crateA");
+    configA.freeFunctions.append(loadA);
+    repo.addModule(configA);
+
+    ir::Function loadB;
+    loadB.label       = QStringLiteral("load");
+    loadB.description = QStringLiteral("B's loader");
+    ir::Module configB;
+    configB.label       = QStringLiteral("config");
+    configB.parentLabel = QStringLiteral("crateB");
+    configB.freeFunctions.append(loadB);
+    repo.addModule(configB);
+
+    ir::Type settingsA;
+    settingsA.label       = QStringLiteral("Settings");
+    settingsA.description = QStringLiteral("A's settings");
+    settingsA.moduleLabel = QStringLiteral("config");
+    settingsA.ownerCrate  = QStringLiteral("crateA");
+    repo.addType(settingsA);
+
+    ir::Type settingsB;
+    settingsB.label       = QStringLiteral("Settings");
+    settingsB.description = QStringLiteral("B's settings");
+    settingsB.moduleLabel = QStringLiteral("config");
+    settingsB.ownerCrate  = QStringLiteral("crateB");
+    repo.addType(settingsB);
+
+    GraphScene scene;
+    GraphBuilder builder;
+    builder.build(repo, &scene);
+
+    // Neither the module nor the type nor the function keeps the bare,
+    // ambiguous label...
+    CHECK(nodeCountNamed(scene, QStringLiteral("config")) == 0);
+    CHECK(nodeCountNamed(scene, QStringLiteral("Settings")) == 0);
+    CHECK(nodeCountNamed(scene, QStringLiteral("load")) == 0);
+    // ...each gets its own crate-qualified node instead, correctly owned...
+    REQUIRE(nodeNamed(scene, "crateA::config") != nullptr);
+    REQUIRE(nodeNamed(scene, "crateB::config") != nullptr);
+    REQUIRE(nodeNamed(scene, "crateA::config::Settings") != nullptr);
+    REQUIRE(nodeNamed(scene, "crateB::config::Settings") != nullptr);
+    CHECK(nodeNamed(scene, "crateA::config::Settings")->comment() == "A's settings");
+    CHECK(nodeNamed(scene, "crateB::config::Settings")->comment() == "B's settings");
+    CHECK(nodesOfKind(scene, NodeType::Class).size() == 2);
+    CHECK(nodesOfKind(scene, NodeType::Function).size() == 2);
+
+    // ...wired to its own crate, never its sibling's.
+    CHECK(hasEdge(scene, "crateA", "crateA::config"));
+    CHECK(hasEdge(scene, "crateB", "crateB::config"));
+    CHECK(hasEdge(scene, "crateA::config", "crateA::config::Settings"));
+    CHECK(hasEdge(scene, "crateB::config", "crateB::config::Settings"));
+    CHECK_FALSE(hasEdge(scene, "crateA::config", "crateB::config::Settings"));
+    CHECK_FALSE(hasEdge(scene, "crateB::config", "crateA::config::Settings"));
+}
+
 TEST_CASE("Builder leaves an unambiguous type's label untouched", "[graphbuilder]")
 {
     // The no-op guarantee B8 depends on: a type whose bare label is unique

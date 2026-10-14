@@ -236,12 +236,15 @@ void buildCollidingNamesWorkspace(const QDir& root)
               "name = \"crate_a\"\n"
               "version = \"0.1.0\"\n");
     // Config lives directly in main.rs (crate-root scope, module label
-    // "crate_a"/"crate_b") rather than in its own same-named file — a
-    // same-named *child module* across two crates (e.g. both having a
-    // src/config.rs) is a separate, already-known, explicitly out-of-scope
-    // limitation (nested module labels aren't crate-qualified, so two
-    // crates' "config" child modules collide regardless of this fix) and
-    // isn't what this test is checking.
+    // "crate_a"/"crate_b") rather than in its own same-named file here —
+    // this test is specifically about collisions at crate-root scope and
+    // within one crate's own tree (root vs. nested module). The harder case
+    // of two DIFFERENT crates each having their own same-named *nested*
+    // module (e.g. both with src/config.rs) is covered separately below by
+    // "RustAnalyzer::analyze disambiguates nested modules of the same name
+    // across crates" — it isn't out of scope anymore, it just needs
+    // ir::Module::parentLabel/ir::Type::ownerCrate, which didn't exist yet
+    // when this test was written.
     writeFile(root.filePath("crate_a/src/main.rs"),
               "fn connect() {}\n"
               "\n"
@@ -321,4 +324,114 @@ TEST_CASE("RustAnalyzer::analyze keeps same-named types and free functions "
     CHECK(configCount == 2);
     CHECK(sawCrateADoc);
     CHECK(sawCrateBDoc);
+}
+
+namespace {
+
+// The limitation R4.5's test above explicitly called out of scope: two
+// crates each with their OWN nested module of the same bare name (both have
+// src/config.rs), each in turn declaring a type and a free function that
+// also share a bare name. ir::Module::parentLabel and ir::Type::ownerCrate
+// exist specifically to let this disambiguate correctly instead of merging.
+void buildNestedModuleCollisionWorkspace(const QDir& root)
+{
+    writeFile(root.filePath("Cargo.toml"),
+              "[workspace]\n"
+              "members = [\"crate_a\", \"crate_b\"]\n");
+
+    writeFile(root.filePath("crate_a/Cargo.toml"),
+              "[package]\n"
+              "name = \"crate_a\"\n"
+              "version = \"0.1.0\"\n");
+    writeFile(root.filePath("crate_a/src/main.rs"), "mod config;\nfn main() {}\n");
+    writeFile(root.filePath("crate_a/src/config.rs"),
+              "/// A's settings.\n"
+              "pub struct Settings;\n"
+              "\n"
+              "/// A's loader.\n"
+              "pub fn load() -> Settings { Settings }\n");
+
+    writeFile(root.filePath("crate_b/Cargo.toml"),
+              "[package]\n"
+              "name = \"crate_b\"\n"
+              "version = \"0.1.0\"\n");
+    writeFile(root.filePath("crate_b/src/main.rs"), "mod config;\nfn main() {}\n");
+    writeFile(root.filePath("crate_b/src/config.rs"),
+              "/// B's settings.\n"
+              "pub struct Settings;\n"
+              "\n"
+              "/// B's loader.\n"
+              "pub fn load() -> Settings { Settings }\n");
+}
+
+} // namespace
+
+TEST_CASE("RustAnalyzer::analyze disambiguates nested modules of the same name "
+          "across crates, and the types/functions they own", "[rustanalyzer]")
+{
+    QTemporaryDir tmp;
+    REQUIRE(tmp.isValid());
+    const QDir root(tmp.path());
+    buildNestedModuleCollisionWorkspace(root);
+
+    const RepoFileIndex index = buildRepoFileIndex(root.absolutePath());
+    ir::Repo repo;
+    QString error;
+    REQUIRE(RustAnalyzer().analyze(index, &repo, &error));
+
+    // Two distinct "config" modules in the IR, each correctly tagged with
+    // its own owning crate via parentLabel — not one module shared (or
+    // misattributed) between them.
+    int configModuleCount = 0;
+    QString parentOfA, parentOfB;
+    for (const ir::Module& m : repo.modules()) {
+        if (m.label != QStringLiteral("config")) continue;
+        ++configModuleCount;
+    }
+    CHECK(configModuleCount == 2);
+    int parentALabelCount = 0, parentBLabelCount = 0;
+    for (const ir::Module& m : repo.modules()) {
+        if (m.label != QStringLiteral("config")) continue;
+        if (m.parentLabel == QStringLiteral("crate_a")) ++parentALabelCount;
+        if (m.parentLabel == QStringLiteral("crate_b")) ++parentBLabelCount;
+    }
+    CHECK(parentALabelCount == 1);
+    CHECK(parentBLabelCount == 1);
+
+    // Each crate's own "config" module owns exactly one "load" free function
+    // with its own doc — not merged, not cross-attributed.
+    bool sawLoadADoc = false, sawLoadBDoc = false;
+    int loadCount = 0;
+    for (const ir::Module& m : repo.modules()) {
+        if (m.label != QStringLiteral("config")) continue;
+        for (const ir::Function& f : m.freeFunctions) {
+            if (f.label != QStringLiteral("load")) continue;
+            ++loadCount;
+            if (m.parentLabel == QStringLiteral("crate_a"))
+                sawLoadADoc = f.description == QStringLiteral("A's loader.");
+            if (m.parentLabel == QStringLiteral("crate_b"))
+                sawLoadBDoc = f.description == QStringLiteral("B's loader.");
+        }
+    }
+    CHECK(loadCount == 2);
+    CHECK(sawLoadADoc);
+    CHECK(sawLoadBDoc);
+
+    // Two distinct "Settings" types, each tagged with the owning crate via
+    // ownerCrate (since moduleLabel alone, "config", is ambiguous), each
+    // keeping its own doc.
+    int settingsCount = 0;
+    bool sawSettingsADoc = false, sawSettingsBDoc = false;
+    for (const ir::Type& t : repo.types()) {
+        if (t.label != QStringLiteral("Settings")) continue;
+        ++settingsCount;
+        CHECK(t.moduleLabel == QStringLiteral("config"));
+        if (t.ownerCrate == QStringLiteral("crate_a"))
+            sawSettingsADoc = t.description == QStringLiteral("A's settings.");
+        if (t.ownerCrate == QStringLiteral("crate_b"))
+            sawSettingsBDoc = t.description == QStringLiteral("B's settings.");
+    }
+    CHECK(settingsCount == 2);
+    CHECK(sawSettingsADoc);
+    CHECK(sawSettingsBDoc);
 }
