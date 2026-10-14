@@ -34,7 +34,7 @@ target_link_libraries(graph_draw PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
 )
 
-# Command-line tool: scan a C++ repo and emit a dependency graph JSON.
+# Command-line tool: scan a repo and emit a dependency graph JSON.
 add_executable(repo_to_graph
     analyze/main.cpp
 )
@@ -43,6 +43,7 @@ target_link_libraries(repo_to_graph PRIVATE
     graph_analyze
     graph_core
     graph_io
+    graph_merge
     Qt${QT_VERSION_MAJOR}::Widgets
 )
 

@@ -19,6 +19,7 @@ add_executable(graph_draw_tests
     test_graphbuilder.cpp
     test_cppanalyzer.cpp
     test_rustanalyzer.cpp
+    test_rustfileitems.cpp
     test_cargotoml.cpp
     test_rustlexer.cpp
 )

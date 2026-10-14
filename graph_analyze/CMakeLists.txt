@@ -12,5 +12,6 @@ target_link_libraries(graph_analyze PUBLIC
     graph_core
     graph_lang
     graph_lang_cpp
+    graph_lang_rust
     Qt${QT_VERSION_MAJOR}::Widgets
 )

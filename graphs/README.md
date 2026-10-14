@@ -56,17 +56,43 @@ the intended future. Only the last has unimplemented nodes.
 
 ## Generating a graph from a repo
 
-The `repo_to_graph` executable scans any C++ repo and emits a graph in this
-format:
+The `repo_to_graph` executable scans a C++ or Rust repo and emits a graph in
+this format:
 
 ```
-repo_to_graph <repo-root> [output.json]
+repo_to_graph [options] repo-root [output.json]
+
+Options:
+  --lang <id>              Restrict analysis to one language id (cpp, rust).
+                           Default: autodetect.
+  --merge <existing.json>  Merge the freshly analyzed graph into this existing
+                           curated graph instead of overwriting the output path
+                           from scratch.
+  --dry-run                With --merge, report kept/added/stale counts without
+                           writing any file.
 ```
 
 With no output path it writes `<repo-root>/graphs/<repo-name>.generated.json`
-(the `.generated` suffix means it never overwrites a curated `<name>.json`). It
-is a self-contained heuristic scanner: modules come from CMake
-`add_library`/`add_executable` targets, classes from `class`/`struct`
-definitions, and functions from their member functions. Every discovered node is
-marked implemented, since it reflects code that already exists. See
-`graph_analyze/repoanalyzer.h` for the edge conventions and known limitations.
+(the `.generated` suffix means it never overwrites a curated `<name>.json`,
+and `--merge`'s input is never clobbered either). It is a self-contained
+heuristic scanner — no libclang, no rustc:
+
+- **C++**: modules come from CMake `add_library`/`add_executable` targets,
+  classes from `class`/`struct` definitions, and functions from their member
+  functions.
+- **Rust**: modules come from Cargo crates (`[workspace]` members plus every
+  `Cargo.toml`, deduped by directory) with depth-1 nested modules derived from
+  `src/<name>.rs`/`src/<name>/`; `dependsOnLabels`-style edges come from
+  `[dependencies]`/`[dev-dependencies]`/`[build-dependencies]` resolved against
+  other discovered crates; classes come from `struct`/`enum`/`trait`
+  definitions, with `impl Trait for Type` producing an inherits edge; functions
+  come from methods and free functions; `use`-resolved references to other
+  repo-defined types produce "uses" edges. Two crates (or a crate and its own
+  nested module) sharing a type or function name are disambiguated into
+  separate, correctly-owned nodes rather than one silently dropping the other.
+
+A polyglot repo (no `--lang`) runs every applicable analyzer into one shared
+graph. Every discovered node is marked implemented, since it reflects code
+that already exists. See `graph_analyze/repoanalyzer.h` for the edge
+conventions and known limitations, and `../RUST_GRAPH_PLAN.md` for the Rust
+support effort's status and remaining known limitations.

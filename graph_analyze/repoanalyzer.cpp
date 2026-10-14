@@ -1,6 +1,7 @@
 #include "repoanalyzer.h"
 #include "graphbuilder.h"
 #include "cppanalyzer.h"
+#include "rust_analyzer.h"
 #include "repofileindex.h"
 #include "ir.h"
 
@@ -29,7 +30,8 @@ bool RepoAnalyzer::analyzeToIr(const QString& repoRoot, ir::Repo* repo)
     const RepoFileIndex index = buildRepoFileIndex(root.absolutePath());
 
     CppAnalyzer cpp;
-    const QVector<LanguageAnalyzer*> available = { &cpp };
+    RustAnalyzer rust;
+    const QVector<LanguageAnalyzer*> available = { &cpp, &rust };
 
     for (LanguageAnalyzer* analyzer : available) {
         // --lang names one analyzer explicitly; otherwise ask each whether it

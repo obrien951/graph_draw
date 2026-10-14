@@ -422,8 +422,16 @@ TEST_CASE("Builder suppresses self-edges", "[graphbuilder]")
     CHECK(hasEdge(scene, "solo", "Recursive"));
 }
 
-TEST_CASE("Builder keeps only the first node for a duplicated label", "[graphbuilder]")
+TEST_CASE("Builder disambiguates two types that share a bare label (B8)",
+          "[graphbuilder]")
 {
+    // Two headers in different directories declaring the same class name (or,
+    // just as plausibly for a Rust workspace, two crates each with their own
+    // `Error`). Before B8's LabelResolver wiring, the second silently
+    // vanished into the first ("duplicate dropped", the original scanner's
+    // classByName behaviour) — losing a real, distinct type. Now each
+    // resolves to the shortest candidate nothing else claims, so both survive
+    // as separate nodes instead of one eating the other.
     ir::Repo repo;
 
     ir::Module core;
@@ -434,17 +442,15 @@ TEST_CASE("Builder keeps only the first node for a duplicated label", "[graphbui
     other.label = QStringLiteral("other");
     repo.addModule(other);
 
-    // Two headers in different directories declaring the same class name: the
-    // original scanner's classByName map kept whichever it saw first.
     ir::Type first;
     first.label       = QStringLiteral("Widget");
-    first.description = QStringLiteral("first wins");
+    first.description = QStringLiteral("first");
     first.moduleLabel = QStringLiteral("core");
     repo.addType(first);
 
     ir::Type second;
     second.label       = QStringLiteral("Widget");
-    second.description = QStringLiteral("second loses");
+    second.description = QStringLiteral("second");
     second.moduleLabel = QStringLiteral("other");
     repo.addType(second);
 
@@ -452,9 +458,93 @@ TEST_CASE("Builder keeps only the first node for a duplicated label", "[graphbui
     GraphBuilder builder;
     builder.build(repo, &scene);
 
-    REQUIRE(nodeCountNamed(scene, QStringLiteral("Widget")) == 1);
-    CHECK(nodeNamed(scene, "Widget")->comment() == "first wins");
-    CHECK(nodesOfKind(scene, NodeType::Class).size() == 1);
+    // The bare label is no longer used by either node...
+    CHECK(nodeCountNamed(scene, QStringLiteral("Widget")) == 0);
+    // ...each gets its own module-qualified node instead, with its own
+    // description preserved...
+    REQUIRE(nodeNamed(scene, "core::Widget")  != nullptr);
+    REQUIRE(nodeNamed(scene, "other::Widget") != nullptr);
+    CHECK(nodeNamed(scene, "core::Widget")->comment()  == "first");
+    CHECK(nodeNamed(scene, "other::Widget")->comment() == "second");
+    CHECK(nodesOfKind(scene, NodeType::Class).size() == 2);
+
+    // ...and each is contained by its own owning module, not the other's.
+    CHECK(hasEdge(scene, "core",  "core::Widget"));
+    CHECK(hasEdge(scene, "other", "other::Widget"));
+    CHECK_FALSE(hasEdge(scene, "core",  "other::Widget"));
+    CHECK_FALSE(hasEdge(scene, "other", "core::Widget"));
+}
+
+TEST_CASE("Builder leaves an unambiguous type's label untouched", "[graphbuilder]")
+{
+    // The no-op guarantee B8 depends on: a type whose bare label is unique
+    // across the repo must come out exactly as it did before this feature
+    // existed, because LabelResolver always tries the bare candidate first.
+    GraphScene scene;
+    GraphBuilder builder;
+    builder.build(makeSampleRepo(), &scene);
+
+    REQUIRE(nodeNamed(scene, "Widget") != nullptr);
+    CHECK(nodeNamed(scene, "Widget")->label() == "Widget");
+    CHECK(hasEdge(scene, "Widget", "Widget::draw"));
+    CHECK(hasEdge(scene, "Button", "Widget"));
+    CHECK(hasEdge(scene, "Reader", "Widget"));
+}
+
+TEST_CASE("Builder disambiguates two free functions that share a bare label (R4.5)",
+          "[graphbuilder]")
+{
+    // Same bug as B8, one band down: two crates each with `fn main()`, or a
+    // crate root and one of its own nested modules each with a same-named
+    // helper. Before this fix the second silently vanished into the first
+    // (plain first-wins on `f.label`), losing both the function itself and
+    // its "contains" edge from its real owning module.
+    ir::Repo repo;
+
+    ir::Module crateA;
+    crateA.label         = QStringLiteral("crate_a");
+    crateA.freeFunctions = { makeFunction(QStringLiteral("main"), QStringLiteral("a's main")) };
+    repo.addModule(crateA);
+
+    ir::Module crateB;
+    crateB.label         = QStringLiteral("crate_b");
+    crateB.freeFunctions = { makeFunction(QStringLiteral("main"), QStringLiteral("b's main")) };
+    repo.addModule(crateB);
+
+    GraphScene scene;
+    GraphBuilder builder;
+    builder.build(repo, &scene);
+
+    // The bare label is no longer used by either node...
+    CHECK(nodeCountNamed(scene, QStringLiteral("main")) == 0);
+    // ...each gets its own module-qualified node instead, with its own
+    // description preserved...
+    REQUIRE(nodeNamed(scene, "crate_a::main") != nullptr);
+    REQUIRE(nodeNamed(scene, "crate_b::main") != nullptr);
+    CHECK(nodeNamed(scene, "crate_a::main")->comment() == "a's main");
+    CHECK(nodeNamed(scene, "crate_b::main")->comment() == "b's main");
+    CHECK(nodesOfKind(scene, NodeType::Function).size() == 2);
+
+    // ...and each is contained by its own owning module, not the other's.
+    CHECK(hasEdge(scene, "crate_a", "crate_a::main"));
+    CHECK(hasEdge(scene, "crate_b", "crate_b::main"));
+    CHECK_FALSE(hasEdge(scene, "crate_a", "crate_b::main"));
+    CHECK_FALSE(hasEdge(scene, "crate_b", "crate_a::main"));
+}
+
+TEST_CASE("Builder leaves an unambiguous free function's label untouched",
+          "[graphbuilder]")
+{
+    // The no-op guarantee this fix depends on: a free function whose bare
+    // label is unique across the repo must come out exactly as it did
+    // before, because LabelResolver always tries the bare candidate first.
+    GraphScene scene;
+    GraphBuilder builder;
+    builder.build(makeSampleRepo(), &scene);
+
+    REQUIRE(nodeNamed(scene, "main") != nullptr);
+    CHECK(nodeNamed(scene, "main")->label() == "main");
+    CHECK(hasEdge(scene, "app", "main"));
 }
 
 TEST_CASE("Builder clears the scene before rebuilding it", "[graphbuilder]")

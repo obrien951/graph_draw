@@ -1,13 +1,17 @@
 #include "rust_analyzer.h"
 #include "repofileindex.h"
 #include "toml_document.h"
+#include "rust_file_items.h"
+#include "rustlex.h"
 #include "ir.h"
 
-#include <stdexcept>
-#include <QSet>
+#include <algorithm>
 #include <QDir>
 #include <QFile>
-#include <QRegularExpression>
+#include <QFileInfo>
+#include <QHash>
+#include <QSet>
+#include <QVector>
 
 QString RustAnalyzer::id() const
 {
@@ -19,99 +23,367 @@ bool RustAnalyzer::detect(const RepoFileIndex& index) const
     return !index.named("Cargo.toml").isEmpty();
 }
 
+namespace {
+
+// Cargo accepts either spelling in different contexts (package.name vs. a
+// dependency key); compare on this normalized form so "my-crate" and
+// "my_crate" resolve to the same crate.
+QString normalizeCrateName(const QString& name)
+{
+    QString n = name;
+    return n.replace(QLatin1Char('-'), QLatin1Char('_'));
+}
+
+// Types and free functions are merged/deduped per (owning module, bare
+// label), never by bare label alone — two crates each with a struct Error,
+// or a crate root and one of its own child modules each with a fn of the
+// same name, are unrelated items that must stay unrelated. '\x1f' can't
+// appear in either half, same separator convention GraphBuilder uses for
+// its own composite edge keys.
+QString itemKey(const QString& ownerModule, const QString& label)
+{
+    return ownerModule + QLatin1Char('\x1f') + label;
+}
+
+struct CrateInfo {
+    QString      name;
+    QString      dir;   // absolute directory containing this crate's Cargo.toml
+    TomlDocument doc;
+};
+
+// Depth-1 nested module names under <crateDir>/src, derived from the shared
+// file index (already target/-free) rather than a fresh filesystem walk. A
+// top-level src/main.rs or src/lib.rs IS the crate root, not a child; any
+// other direct src/ file, or any src/<name>/ directory, is exactly one child
+// module no matter how deep its own contents go — a decoy file three levels
+// under src/db/ must never surface as its own module.
+QStringList nestedModuleNames(const RepoFileIndex& index, const QString& crateDir)
+{
+    const QString srcPrefix = crateDir + QStringLiteral("/src/");
+    QSet<QString> names;
+    for (const QString& path : index.files()) {
+        if (!path.startsWith(srcPrefix))
+            continue;
+        const QString remainder = path.mid(srcPrefix.length());
+        const int slash = remainder.indexOf(QLatin1Char('/'));
+        if (slash >= 0) {
+            names.insert(remainder.left(slash));
+            continue;
+        }
+        if (!remainder.endsWith(QLatin1String(".rs")))
+            continue;
+        const QString stem = remainder.left(remainder.length() - 3);
+        if (stem == QLatin1String("main") || stem == QLatin1String("lib"))
+            continue;
+        names.insert(stem);
+    }
+    QStringList sorted = names.values();
+    std::sort(sorted.begin(), sorted.end());
+    return sorted;
+}
+
+// Dependency names a crate's own Cargo.toml declares (regular, dev, build),
+// unioned with the workspace-level dependency table when one exists. Whether
+// a candidate actually names a crate this analyzer discovered is decided by
+// the caller; an external crate (serde, tokio, ...) simply isn't in that set
+// and the candidate is dropped there, same as any other unresolved label.
+QStringList dependencyCandidates(const TomlDocument& doc, const QStringList& workspaceDeps)
+{
+    QSet<QString> names;
+    static const QStringList kPrefixes = {
+        QStringLiteral("dependencies"),
+        QStringLiteral("dev-dependencies"),
+        QStringLiteral("build-dependencies"),
+    };
+    for (const QString& prefix : kPrefixes)
+        for (const QString& n : doc.keys(prefix))
+            names.insert(n);
+    for (const QString& n : workspaceDeps)
+        names.insert(n);
+    QStringList result = names.values();
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+// Which module owns a given .rs file under <crateDir>/src — the crate root
+// for main.rs/lib.rs, or the depth-1 child module a direct sibling file or
+// directory resolves to. Mirrors nestedModuleNames' own rule exactly, so a
+// file's type/function nodes always land on the same module its name did.
+QString owningModuleLabel(const QString& crateLabel, const QString& crateDir, const QString& filePath)
+{
+    const QString srcPrefix = crateDir + QStringLiteral("/src/");
+    if (!filePath.startsWith(srcPrefix))
+        return crateLabel;
+    const QString remainder = filePath.mid(srcPrefix.length());
+    const int slash = remainder.indexOf(QLatin1Char('/'));
+    if (slash >= 0)
+        return remainder.left(slash);
+    const QString stem = remainder.endsWith(QLatin1String(".rs"))
+        ? remainder.left(remainder.length() - 3) : remainder;
+    if (stem == QLatin1String("main") || stem == QLatin1String("lib"))
+        return crateLabel;
+    return stem;
+}
+
+// One scanned .rs file: which module its free functions/types belong to,
+// what scanRustFile found, and its raw lines (leadingDoc needs them, and
+// blanking them again per description lookup would be wasted work).
+struct FileScan {
+    QString        relPath;      // repo-root-relative, for fallback descriptions
+    QString        ownerModule;
+    QString        ownerCrate;   // the crate this file belongs to, regardless of
+                                 // which of its modules owns the file directly —
+                                 // `use` paths resolve against the whole crate,
+                                 // not just the one module that declared them.
+    RustFileItems  items;
+    QStringList    rawLines;
+};
+
+} // namespace
+
 bool RustAnalyzer::analyze(const RepoFileIndex& index, ir::Repo* repo, QString* error) const
 {
-    // NEW (B6-B8). Crates from [workspace] members plus every Cargo.toml, deduped by directory and sorted by crate name.
-    // [lib] never creates a second module; [[bin]] does only when its name differs from the package name.
-    // Nested modules are depth-1 and derived from src/ paths, so no mod resolution is needed and the tree cannot disagree with itself.
-    
-    // Collect all Cargo.toml files
+    // Crates from every Cargo.toml, deduped by directory and sorted by crate
+    // name. Nested modules are depth-1 and derived from src/ paths, so no mod
+    // resolution is needed and the tree cannot disagree with itself.
     const auto cargoFiles = index.named("Cargo.toml");
-    
-    // Deduplicate by directory and collect crates
-    QSet<QString> seenDirectories;
-    QStringList crateNames;
-    QStringList crateDirectories;
-    
+
+    QSet<QString>     seenDirectories;
+    QVector<CrateInfo> crates;
+    QStringList        workspaceDeps;
+
     for (const QString& cargoPath : cargoFiles) {
-        // Get directory of the Cargo.toml
-        QDir dir = QDir(cargoPath).absolutePath();
-        QString dirPath = dir.absolutePath();
-        
-        // Skip if already processed this directory
-        if (seenDirectories.contains(dirPath)) {
+        // Directory containing the manifest — NOT QDir(cargoPath).absolutePath(),
+        // which (being handed a file path) returns the file path itself rather
+        // than its parent.
+        const QString dirPath = QFileInfo(cargoPath).absolutePath();
+
+        if (seenDirectories.contains(dirPath))
             continue;
-        }
-        
         seenDirectories.insert(dirPath);
-        
-        // Read and parse the Cargo.toml
+
         QFile file(cargoPath);
         if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            if (error) {
-                *error = QString("Failed to open Cargo.toml at %1").arg(cargoPath);
-            }
+            if (error) *error = QString("Failed to open Cargo.toml at %1").arg(cargoPath);
             return false;
         }
-        
-        QString cargoContent = file.readAll();
+        const QString cargoContent = QString::fromUtf8(file.readAll());
         file.close();
-        
-        if (cargoContent.isEmpty()) {
-            if (error) {
-                *error = QString("Failed to read Cargo.toml content at %1").arg(cargoPath);
-            }
-            return false;
-        }
-        
+
         TomlDocument doc = TomlDocument::parse(cargoContent);
-        
-        // Extract crate name from package.name
-        QString crateName = doc.value("package.name");
-        if (crateName.isEmpty()) {
-            // If no package.name, skip this Cargo.toml
+
+        // A workspace root may declare [workspace.dependencies] while having
+        // no [package] of its own (a "virtual manifest") — still worth
+        // reading even though it contributes no crate module.
+        for (const QString& n : doc.keys(QStringLiteral("workspace.dependencies")))
+            workspaceDeps.append(n);
+
+        const QString crateName = doc.value(QStringLiteral("package.name"));
+        if (crateName.isEmpty())
             continue;
-        }
-        
-        // Add to crate list
-        crateNames.append(crateName);
-        crateDirectories.append(dirPath);
+
+        crates.append(CrateInfo{crateName, dirPath, std::move(doc)});
     }
-    
-    // Sort crate names and their corresponding directories together
-    // This maintains the pairing between crate name and directory
-    QStringList sortedCrateNames;
-    QStringList sortedDirectories;
-    
-    // Create pairs of (crateName, directory) and sort them by crate name
-    QVector<QPair<QString, QString>> cratePairs;
-    for (int i = 0; i < crateNames.size(); ++i) {
-        cratePairs.append(QPair<QString, QString>(crateNames[i], crateDirectories[i]));
-    }
-    
-    std::sort(cratePairs.begin(), cratePairs.end(), 
-              [](const QPair<QString, QString>& a, const QPair<QString, QString>& b) {
-                  return a.first < b.first;
-              });
-    
-    for (const auto& pair : cratePairs) {
-        sortedCrateNames.append(pair.first);
-        sortedDirectories.append(pair.second);
-    }
-    
-    // Create modules for each crate
-    for (int i = 0; i < sortedCrateNames.size(); ++i) {
-        const QString& crateName = sortedCrateNames[i];
-        const QString& crateDir = sortedDirectories[i];
-        
-        // Create a module for the crate
+
+    std::sort(crates.begin(), crates.end(),
+              [](const CrateInfo& a, const CrateInfo& b) { return a.name < b.name; });
+
+    QHash<QString, QString> crateByNormalizedName; // normalized -> real label
+    for (const CrateInfo& c : crates)
+        crateByNormalizedName.insert(normalizeCrateName(c.name), c.name);
+
+    // Module index as each module lands in repo->modules(), kept so the
+    // file-scan pass below can append free functions without a second
+    // lookup mechanism.
+    QHash<QString, int> moduleIndexByLabel;
+
+    // Every module label that belongs to a given crate (the crate's own root
+    // plus its depth-1 children) — how `use` resolution below decides whether
+    // a path could plausibly name something in "this crate" versus a
+    // different one entirely.
+    QHash<QString, QStringList> modulesOfCrate;
+
+    for (const CrateInfo& c : crates) {
         ir::Module module;
-        module.label = crateName;
-        module.description = QString("Rust crate: %1").arg(crateName);
-        
-        // Add the module to the repo using the proper method
+        module.label             = c.name;
+        module.description       = QString("Rust crate: %1").arg(c.name);
+        module.childModuleLabels = nestedModuleNames(index, c.dir);
+        modulesOfCrate.insert(c.name, QStringList{c.name} + module.childModuleLabels);
+
+        QSet<QString> deps;
+        for (const QString& candidate : dependencyCandidates(c.doc, workspaceDeps)) {
+            const auto it = crateByNormalizedName.constFind(normalizeCrateName(candidate));
+            if (it == crateByNormalizedName.constEnd())
+                continue;          // not one of ours — external dependency
+            if (it.value() == c.name)
+                continue;          // no self-edges
+            deps.insert(it.value());
+        }
+        QStringList depList = deps.values();
+        std::sort(depList.begin(), depList.end());
+        module.dependsOnLabels = depList;
+
         repo->addModule(module);
+        moduleIndexByLabel.insert(module.label, repo->modules().size() - 1);
+
+        for (const QString& childName : module.childModuleLabels) {
+            ir::Module child;
+            child.label       = childName;
+            child.description = QString("Rust module: %1").arg(childName);
+            repo->addModule(child);
+            moduleIndexByLabel.insert(child.label, repo->modules().size() - 1);
+        }
     }
-    
+
+    // ── Per-file scan: types, methods, free functions, use-paths ────────────
+    // scanRustFile does the actual parsing; this pass only decides which
+    // module/type in the IR each of its findings belongs to.
+    const QDir root(index.root());
+    QVector<FileScan> fileScans;
+
+    for (const CrateInfo& c : crates) {
+        const QString srcPrefix = c.dir + QStringLiteral("/src/");
+        QStringList rsFiles;
+        for (const QString& path : index.withSuffix({QStringLiteral(".rs")}))
+            if (path.startsWith(srcPrefix))
+                rsFiles.append(path);
+        std::sort(rsFiles.begin(), rsFiles.end());
+
+        for (const QString& path : rsFiles) {
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+                continue; // unreadable file contributes nothing, same as a missing one
+            const QString content = QString::fromUtf8(f.readAll());
+            f.close();
+
+            FileScan scan;
+            scan.relPath     = root.relativeFilePath(path);
+            scan.ownerModule = owningModuleLabel(c.name, c.dir, path);
+            scan.ownerCrate  = c.name;
+            scan.items       = scanRustFile(content);
+            scan.rawLines    = content.split(QLatin1Char('\n'));
+            fileScans.append(std::move(scan));
+        }
+    }
+
+    // Types/methods merge by (owning module, label), not label alone — an
+    // impl in one file for a struct declared in another *file of the same
+    // module* is the normal shape for a trait + its impls living alongside
+    // each other and still merges; the same bare name in a different module
+    // (a different crate, or a crate root vs. its own child module) is an
+    // unrelated item and must not merge, which plain by-label keying got
+    // wrong (see R4.5 in RUST_GRAPH_PLAN.md).
+    QHash<QString, int>             typeIndexByKey;
+    QHash<int, QSet<QString>>       typesTouchedByFile;  // fileScans index -> composite keys
+    QSet<QString>                   functionKeysSeen;    // composite (module, label) dedup
+    // bare label -> every (ownerModule) that declared it, for `use`
+    // resolution below: a `use` path only ever names something in the
+    // writer's own crate, never a sibling crate's unrelated same-named item,
+    // so resolution must search within modulesOfCrate(this file's crate),
+    // not globally.
+    QHash<QString, QVector<QString>> moduleOwnersByBareLabel;
+
+    for (int fi = 0; fi < fileScans.size(); ++fi) {
+        const FileScan& scan = fileScans.at(fi);
+        QSet<QString>& touched = typesTouchedByFile[fi];
+
+        for (const RustFileItems::Type& t : scan.items.types) {
+            const QString key = itemKey(scan.ownerModule, t.label);
+            int idx;
+            const auto it = typeIndexByKey.constFind(key);
+            if (it == typeIndexByKey.constEnd()) {
+                ir::Type nt;
+                nt.label       = t.label;
+                nt.moduleLabel = scan.ownerModule;
+                repo->addType(nt);
+                idx = repo->types().size() - 1;
+                typeIndexByKey.insert(key, idx);
+                moduleOwnersByBareLabel[t.label].append(scan.ownerModule);
+            } else {
+                idx = it.value();
+            }
+            touched.insert(key);
+
+            ir::Type& rt = repo->types()[idx];
+            if (rt.description.isEmpty()) {
+                const QString doc = rustlex::leadingDoc(scan.rawLines, t.line);
+                rt.description = doc.isEmpty()
+                    ? QString("Rust item %1 declared in %2.").arg(t.label, scan.relPath)
+                    : doc;
+            }
+            for (const QString& trait : t.implementsTraits)
+                if (!rt.baseLabels.contains(trait))
+                    rt.baseLabels.append(trait);
+            for (const RustFileItems::Item& m : t.methods) {
+                const QString qualified = t.label + QStringLiteral("::") + m.label;
+                bool exists = false;
+                for (const ir::Function& existing : rt.methods)
+                    if (existing.label == qualified) { exists = true; break; }
+                if (exists) continue;
+                ir::Function fn;
+                fn.label = qualified;
+                const QString doc = rustlex::leadingDoc(scan.rawLines, m.line);
+                fn.description = doc.isEmpty()
+                    ? QString("Method %1 of %2.").arg(m.label, t.label)
+                    : doc;
+                rt.methods.append(fn);
+            }
+        }
+
+        if (!moduleIndexByLabel.contains(scan.ownerModule))
+            continue; // defensive: every owner this pass produces was just added above
+        ir::Module& ownerModule = repo->modules()[moduleIndexByLabel.value(scan.ownerModule)];
+        for (const RustFileItems::Item& fn : scan.items.functions) {
+            const QString fnKey = itemKey(scan.ownerModule, fn.label);
+            if (functionKeysSeen.contains(fnKey)) continue; // first definition wins, per-module
+            functionKeysSeen.insert(fnKey);
+            ir::Function f;
+            f.label = fn.label;
+            const QString doc = rustlex::leadingDoc(scan.rawLines, fn.line);
+            f.description = doc.isEmpty()
+                ? QString("Function %1 declared in %2.").arg(fn.label, scan.relPath)
+                : doc;
+            ownerModule.freeFunctions.append(f);
+        }
+    }
+
+    // "uses": file-granular, mirroring the C++ include heuristic's fidelity —
+    // every type a file declares or implements is considered to use whatever
+    // repo-defined type any of that file's `use` paths named. A `use` path
+    // only ever names something in the writer's own crate (an unqualified
+    // leaf can't reach into a sibling crate), so resolution is scoped to
+    // modulesOfCrate(scan.ownerCrate), not the whole repo: a bare label that
+    // resolves to exactly one module within this crate is accepted; one
+    // that's only defined in some other crate is external and dropped (same
+    // as before); one that's ambiguous even within this single crate (two of
+    // its own modules both declaring the same bare name, and the `use` path
+    // too short to say which) is dropped rather than guessed at — the same
+    // "don't resolve what you can't" philosophy as every other label here.
+    for (int fi = 0; fi < fileScans.size(); ++fi) {
+        const FileScan& scan = fileScans.at(fi);
+        const QStringList crateModules = modulesOfCrate.value(scan.ownerCrate);
+
+        QSet<QString> resolvedUses; // bare labels, unambiguous within this crate
+        for (const QString& path : scan.items.usePaths) {
+            const auto it = moduleOwnersByBareLabel.constFind(path);
+            if (it == moduleOwnersByBareLabel.constEnd()) continue;
+            int matches = 0;
+            for (const QString& owner : it.value())
+                if (crateModules.contains(owner)) ++matches;
+            if (matches == 1) resolvedUses.insert(path);
+        }
+        if (resolvedUses.isEmpty()) continue;
+
+        for (const QString& touchedKey : typesTouchedByFile.value(fi)) {
+            ir::Type& rt = repo->types()[typeIndexByKey.value(touchedKey)];
+            for (const QString& used : resolvedUses) {
+                if (used == rt.label) continue;
+                if (rt.baseLabels.contains(used)) continue;
+                if (!rt.usesLabels.contains(used))
+                    rt.usesLabels.append(used);
+            }
+        }
+    }
+
     return true;
 }

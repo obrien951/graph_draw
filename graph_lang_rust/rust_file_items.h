@@ -15,6 +15,10 @@ public:
         QString label;
         int line = 0;
         QVector<Item> methods;
+        // Trait names from "impl Trait for Type" blocks that target this
+        // type (deduped). Empty for a type with only inherent impls, or
+        // none at all.
+        QStringList implementsTraits;
     };
 
     static RustFileItems empty();
